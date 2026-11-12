@@ -3,13 +3,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('typescript');
+const path = require('node:path');
 
 function load(file, dependencies, globals = {}) {
   const exports = {};
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(code, { exports, process: { env: {} }, require: name => {
+  vm.runInNewContext(code, { exports, process: { env: {} }, ReadableStream, TextDecoder, TextEncoder, Response, require: name => {
     if (name === 'server-only') return {};
     if (name in dependencies) return dependencies[name];
+    if (name.startsWith('@/')) return load('src/' + name.slice(2) + '.ts', dependencies, globals);
+    if (name.startsWith('.')) return load(path.resolve(path.dirname(file), name) + '.ts', dependencies, globals);
+    if (name === 'zod') return require('zod');
     throw new Error(`Unexpected dependency: ${name}`);
   }, ...globals });
   return exports;
@@ -27,14 +31,14 @@ test('initial greeting does not wait for model inference or clinic queries', asy
 test('live calls use a separate small model with bounded output and keep-alive', async () => {
   let sent;
   const api = load('src/lib/voice/respond.ts', {
-    '@/lib/supabase/admin': { supabaseAdmin: { from() { return { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: null }; } }; } } },
+    '@/lib/clinic-directory': { async loadClinicDirectory() { return { clinic: null, doctors: [], available: true }; } },
     '@/lib/ai/ollama': { async ollamaChat(messages, options) { sent = { messages, options }; return 'What is your name?'; } },
   });
-  await api.generateAgentReply({ name: 'Reception', user_id: 'owner' }, [], [{ speaker: 'caller', text: 'Book a visit' }]);
+  await api.generateAgentReply({ name: 'Reception', user_id: 'owner' }, [], [{ speaker: 'caller', text: 'Do you offer wheelchair access?' }]);
   assert.equal(sent.options.model, 'qwen3:0.6b');
-  assert.equal(sent.options.maxTokens, 96);
+  assert.equal(sent.options.maxTokens, 128);
   assert.equal(sent.options.keepAlive, '30m');
-  assert.equal(sent.messages.at(-1).content, 'Book a visit');
+  assert.equal(sent.messages.at(-1).content, 'Do you offer wheelchair access?');
 });
 
 test('voice inference options do not truncate structured post-call analysis', async () => {

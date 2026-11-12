@@ -3,6 +3,8 @@ import "server-only";
 import { analyzeCallTranscript, extractAppointment } from "@/lib/ai/ollama";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { CallTurn } from "@/lib/voice/respond";
+import { readBookingDraft } from '@/lib/voice/booking-flow';
+import { loadClinicDirectory } from '@/lib/clinic-directory';
 
 interface SaveCallInput {
   agentId: string;
@@ -20,7 +22,14 @@ interface SaveCallInput {
  * Shared by the browser call tester and the telephony webhooks.
  */
 export async function saveCallRecord(input: SaveCallInput) {
-  const [analysis, booking] = await Promise.all([analyzeCallTranscript(input.transcript), extractAppointment(input.transcript)]);
+  const directory = await loadClinicDirectory(input.userId);
+  const draft = readBookingDraft(input.transcript, directory.doctors);
+  const bookingTask = draft.active || draft.cancelled ? Promise.resolve({
+    requested: !draft.cancelled, whatsapp_consent: draft.consent === true,
+    customer_name: draft.name, customer_phone: draft.phone, requested_time: draft.time,
+    requested_doctor: draft.doctor, patient_concern: draft.concern, service: 'Clinic consultation',
+  }) : extractAppointment(input.transcript);
+  const [analysis, booking] = await Promise.all([analyzeCallTranscript(input.transcript), bookingTask]);
   const warnings: string[] = [];
 
   const { data: conversation, error: conversationError } = await supabaseAdmin
@@ -80,6 +89,18 @@ export async function saveCallRecord(input: SaveCallInput) {
         customer_email: analysis.lead.email,
         service: booking.service,
         requested_time: booking.requested_time,
+        requested_doctor: booking.requested_doctor,
+        patient_concern: booking.patient_concern,
+        call_summary: [
+          `Patient: ${booking.customer_name ?? analysis.lead.name ?? 'Not captured'}`,
+          `Contact: ${booking.customer_phone ?? phone ?? 'Not captured'}`,
+          `Requested doctor: ${booking.requested_doctor ?? 'Clinic to assign'}`,
+          `Patient-reported concern: ${booking.patient_concern ?? 'Not captured; review the call transcript'}`,
+          `Service: ${booking.service ?? 'Not captured'}`,
+          `Preferred time: ${booking.requested_time ?? 'Not captured'}`,
+          `WhatsApp permission recorded: ${booking.whatsapp_consent ? 'Yes; verify in transcript' : 'Not recorded'}`,
+          'Reception action: verify patient details, doctor and availability before confirming. This is a request, not a confirmed slot.',
+        ].join('\n'),
         status: "requested",
         whatsapp_consent: booking.whatsapp_consent,
       })

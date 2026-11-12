@@ -59,7 +59,7 @@ export default function AgentsPage() {
   const [businessType, setBusinessType] = useState("");
   const [greeting, setGreeting] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [voice, setVoice] = useState("nova");
+  const [voice, setVoice] = useState("warm-female");
 
   const load = useCallback(async () => {
     try {
@@ -202,10 +202,12 @@ export default function AgentsPage() {
                       <SelectValue placeholder="Choose a voice" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="nova">Nova</SelectItem>
-                      <SelectItem value="echo">Echo</SelectItem>
-                      <SelectItem value="alloy">Alloy</SelectItem>
-                      <SelectItem value="shimmer">Shimmer</SelectItem>
+                      <SelectItem value="warm-female">Warm female</SelectItem>
+                      <SelectItem value="clear-female">Clear female</SelectItem>
+                      <SelectItem value="calm-male">Calm male</SelectItem>
+                      <SelectItem value="deep-male">Deep male</SelectItem>
+                      <SelectItem value="youthful">Youthful</SelectItem>
+                      <SelectItem value="gentle">Gentle</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

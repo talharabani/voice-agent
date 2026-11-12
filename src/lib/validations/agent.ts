@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const agentVoiceEnum = z.enum(["nova", "echo", "alloy", "shimmer"]);
+export const agentVoiceEnum = z.enum(["nova", "echo", "alloy", "shimmer", "warm-female", "clear-female", "calm-male", "deep-male", "youthful", "gentle"]);
 
 export const createAgentSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(120),

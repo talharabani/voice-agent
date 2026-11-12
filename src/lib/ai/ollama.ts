@@ -1,8 +1,25 @@
 import "server-only";
+import { readJsonLines } from '@/lib/voice/protocol';
+import { z } from 'zod';
 
-interface OllamaChatMessage {
+export interface OllamaChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+}
+
+export async function* ollamaChatStream(messages: OllamaChatMessage[], signal?: AbortSignal) {
+  const model = process.env.OLLAMA_VOICE_MODEL || 'qwen3:0.6b';
+  const timeout = AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 120000));
+  const response = await fetch(`${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages, stream: true, keep_alive: '30m', options: { num_predict: 128 }, ...(/^qwen3(?::|$)/i.test(model) ? { think: false } : {}) }),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  });
+  if (!response.ok || !response.body) throw new Error(`Voice model request failed (${response.status})`);
+  for await (const chunk of readJsonLines<{ message?: { content?: string }; error?: string }>(response.body)) {
+    if (chunk.error) throw new Error('Voice generation failed');
+    if (chunk.message?.content) yield chunk.message.content;
+  }
 }
 
 interface OllamaChatResponse {
@@ -119,6 +136,8 @@ export interface AppointmentExtraction {
   customer_phone: string | null;
   service: string | null;
   requested_time: string | null;
+  requested_doctor: string | null;
+  patient_concern: string | null;
 }
 
 const NO_APPOINTMENT: AppointmentExtraction = {
@@ -128,6 +147,8 @@ const NO_APPOINTMENT: AppointmentExtraction = {
   customer_phone: null,
   service: null,
   requested_time: null,
+  requested_doctor: null,
+  patient_concern: null,
 };
 
 /**
@@ -152,7 +173,9 @@ export async function extractAppointment(
             "Decide whether the CALLER asked to book, schedule, or reserve an appointment/visit/service. " +
             "Respond with ONLY this JSON, no other text: " +
             '{"requested":true|false,"whatsapp_consent":true|false,"customer_name":"string or null","customer_phone":"string or null",' +
-            '"service":"short phrase or null","requested_time":"the time/date exactly as the caller said it, or null"}. ' +
+            '"service":"short phrase or null","requested_time":"the time/date exactly as the caller said it, or null",' +
+            '"requested_doctor":"doctor name explicitly requested by the caller, or null","patient_concern":"the caller own words about their reason for visiting, or null"}. ' +
+            'Never invent a doctor, symptom, diagnosis, patient name, phone or appointment time. Preserve the caller language. ' +
             "Set whatsapp_consent:true ONLY when the CALLER explicitly agreed to receive an appointment confirmation on WhatsApp. Never infer consent from a phone number. If no booking was discussed, use requested:false and nulls.",
         },
         { role: "user", content: transcriptText },
@@ -160,7 +183,12 @@ export async function extractAppointment(
       { format: "json" }
     );
 
-    const parsed = JSON.parse(content) as Partial<AppointmentExtraction>;
+    const optionalText = z.string().trim().max(2000).nullable().optional();
+    const parsed = z.object({
+      requested: z.boolean(), whatsapp_consent: z.boolean().optional(),
+      customer_name: optionalText, customer_phone: optionalText, service: optionalText,
+      requested_time: optionalText, requested_doctor: optionalText, patient_concern: optionalText,
+    }).parse(JSON.parse(content));
     if (parsed.requested !== true) return NO_APPOINTMENT;
 
     return {
@@ -170,6 +198,8 @@ export async function extractAppointment(
       customer_phone: parsed.customer_phone ?? null,
       service: parsed.service ?? null,
       requested_time: parsed.requested_time ?? null,
+      requested_doctor: parsed.requested_doctor ?? null,
+      patient_concern: parsed.patient_concern ?? null,
     };
   } catch (err) {
     console.error("Appointment extraction failed, skipping", err);

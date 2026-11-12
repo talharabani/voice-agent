@@ -79,7 +79,30 @@ export type AppointmentRow = {
   whatsapp_message_id: string | null;
   whatsapp_error: string | null;
   whatsapp_sent_at: string | null;
+  requested_doctor: string | null;
+  patient_concern: string | null;
+  call_summary: string | null;
+  doctor_id: string | null;
+  doctor_name: string | null;
 };
+
+export type DoctorRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  specialty: string;
+  qualifications: string;
+  experience_years: number;
+  description: string;
+  photo_url: string | null;
+  availability: string;
+  languages: string[];
+  concern_keywords: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+export type PublicDoctor = Omit<DoctorRow, 'user_id' | 'created_at' | 'updated_at' | 'is_active'>;
 
 export type ClinicProfileRow = {
   user_id: string;
@@ -113,6 +136,12 @@ export type KnowledgeDocRow = {
 export interface Database {
   public: {
     Tables: {
+      doctors: {
+        Row: DoctorRow;
+        Insert: Partial<DoctorRow> & { user_id: string; name: string; specialty: string };
+        Update: Partial<DoctorRow>;
+        Relationships: [];
+      };
       clinic_profiles: {
         Row: ClinicProfileRow;
         Insert: Omit<ClinicProfileRow, 'updated_at'> & { updated_at?: string };

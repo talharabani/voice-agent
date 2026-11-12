@@ -7,7 +7,7 @@ import { ApiError, apiErrorResponse, requireApiUser } from "@/lib/api-helpers";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { callLimitForPlan, monthStartISO } from "@/lib/plan";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { generateAgentReply } from "@/lib/voice/respond";
+import { generateAgentReply, createVoiceStream } from "@/lib/voice/respond";
 import { transcriptTurnSchema } from "@/lib/validations/voice";
 
 /**
@@ -19,6 +19,8 @@ import { transcriptTurnSchema } from "@/lib/validations/voice";
  */
 
 const converseSchema = z.object({
+  stream: z.boolean().default(false),
+  language_hint: z.enum(['en', 'ur', 'pa', 'hi']).default('en'),
   agent_id: z.string().uuid(),
   history: z.array(transcriptTurnSchema).max(80).default([]),
 });
@@ -76,6 +78,8 @@ export async function POST(req: Request) {
       .from("knowledge_docs")
       .select("*")
       .eq("agent_id", agent.id);
+
+    if (input.stream) return await createVoiceStream(agent, knowledge ?? [], input.history, input.language_hint, req.signal);
 
     let reply: string;
     try {

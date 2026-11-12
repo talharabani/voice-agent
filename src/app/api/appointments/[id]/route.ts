@@ -13,6 +13,7 @@ const updateAppointmentSchema = z.object({
   customer_phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/).optional(),
   whatsapp_consent: z.boolean().optional(),
   notify: z.boolean().optional(),
+  doctor_id: z.string().uuid().optional(),
 });
 
 async function assertOwned(userId: string, id: string) {
@@ -27,6 +28,21 @@ async function assertOwned(userId: string, id: string) {
     throw new ApiError("Appointment not found", 404);
   }
   return data;
+}
+
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireApiUser();
+    const { id } = await params;
+    const appointment = await assertOwned(user.id, id);
+    let transcript: unknown = [];
+    if (appointment.conversation_id) {
+      const { data, error } = await supabaseAdmin.from('conversations').select('transcript').eq('id', appointment.conversation_id).eq('user_id', user.id).maybeSingle();
+      if (error) throw error;
+      transcript = data?.transcript ?? [];
+    }
+    return NextResponse.json({ appointment, transcript });
+  } catch (error) { return apiErrorResponse(error); }
 }
 
 export async function PATCH(
@@ -47,6 +63,15 @@ export async function PATCH(
     }
 
     const { notify, ...changes } = input;
+    let doctorName: string | undefined;
+    if (changes.status === 'confirmed' || changes.doctor_id) {
+      const doctorId = changes.doctor_id ?? existing.doctor_id;
+      if (!doctorId) throw new ApiError('Select the clinic doctor who will see the patient.', 422);
+      const { data: doctor, error: doctorError } = await supabaseAdmin.from('doctors').select('id, name').eq('id', doctorId).eq('user_id', user.id).eq('is_active', true).maybeSingle();
+      if (doctorError) throw doctorError;
+      if (!doctor) throw new ApiError('The selected doctor is unavailable for this clinic.', 422);
+      doctorName = doctor.name;
+    }
     const finalStatus = changes.status ?? existing.status;
     if (finalStatus === 'confirmed' && !(changes.scheduled_at ?? existing.scheduled_at)) {
       throw new ApiError('Choose an exact appointment date and time before confirming.', 422);
@@ -55,12 +80,12 @@ export async function PATCH(
       throw new ApiError('Choose a future appointment date and time.', 422);
     }
     if (['sending', 'accepted', 'sent', 'delivered', 'read', 'unknown'].includes(existing.whatsapp_status) &&
-      (changes.scheduled_at !== undefined || changes.customer_phone !== undefined || changes.service !== undefined)) {
+      (changes.scheduled_at !== undefined || changes.customer_phone !== undefined || changes.service !== undefined || changes.doctor_id !== undefined)) {
       throw new ApiError('This confirmation has already been submitted. Contact the patient before changing its details.', 409);
     }
     const { data, error } = await supabaseAdmin
       .from("appointments")
-      .update({ ...changes, updated_at: new Date().toISOString() })
+      .update({ ...changes, ...(doctorName ? { doctor_name: doctorName, doctor_id: changes.doctor_id ?? existing.doctor_id } : {}), updated_at: new Date().toISOString() })
       .eq("id", id)
       .eq("user_id", user.id)
       .select("*, agents(name)")

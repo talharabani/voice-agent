@@ -111,6 +111,13 @@ test('provider rejection is failed, rather than delivered', async () => {
   assert.match(row.whatsapp_error, /132000/);
 });
 
+test('confirmation includes the assigned doctor and omits private patient concerns', async () => {
+  const { api, requests } = setup({ doctor_name: 'Dr. Ayesha', patient_concern: 'Private patient concern' });
+  await api.sendAppointmentConfirmation('appt-1', 'owner-1');
+  assert.match(requests[0].body.template.components[0].parameters[2].text, /Dr\. Ayesha/);
+  assert.doesNotMatch(JSON.stringify(requests[0].body), /Private patient concern/);
+});
+
 test('unknown send outcome is not automatically retried', async () => {
   const { api, row, requests } = setup({}, { timeout: true });
   await api.sendAppointmentConfirmation('appt-1', 'owner-1');

@@ -149,3 +149,15 @@
 @keyframes voice-breathe { 50% { transform: scale(1.07); } }
 @keyframes voice-wave { to { transform: scaleY(.35); } }
 @media (prefers-reduced-motion: reduce) { .voice-orb, .voice-bar { animation: none !important; } }
+
+.clinic-voice-room { background-image: radial-gradient(ellipse at 50% 38%, #adc1a12b 0%, transparent 58%); }
+.clinic-voice-room::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(#dad3bf22 1px, transparent 1px), linear-gradient(90deg, #dad3bf22 1px, transparent 1px); background-size: 42px 42px; mask-image: radial-gradient(ellipse at center, #000, transparent 75%); pointer-events: none; }
+.clinic-orbit { --mic-level: 0; width: 268px; height: 268px; border-color: #7e9b7635; }
+.clinic-orbit .voice-orb { background: radial-gradient(circle at 30% 20%, #e2ead9, #abc69a 40%, #7e9b76 76%, #5c7959); box-shadow: inset 4px 8px 30px #ffffff70, inset -8px -12px 25px #35553335, 0 24px 65px #7e9b7633; }
+.clinic-orbit.voice-listening .voice-orb { animation: none; transform: scale(calc(1 + var(--mic-level) * .5)); transition: transform 80ms linear; }
+.clinic-orbit-ring { position: absolute; inset: -14px; border: 1px dashed #7e9b7650; border-radius: 50%; animation: clinic-orbit 55s linear infinite; }
+.clinic-orbit-dot { position: absolute; top: 34px; right: 16px; height: 9px; width: 9px; border-radius: 50%; background: #7e9b76; box-shadow: 0 0 0 5px #7e9b761a; }
+.doctor-profile { animation: clinic-card-in .4s ease both; }
+@keyframes clinic-orbit { to { transform: rotate(360deg); } }
+@keyframes clinic-card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .clinic-orbit-ring, .doctor-profile { animation: none !important; } .clinic-orbit.voice-listening .voice-orb { transform: none; } }

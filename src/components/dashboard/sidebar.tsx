@@ -12,6 +12,7 @@ import {
   CalendarCheck,
   Users,
   Settings,
+  Stethoscope,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ import { Waveform } from "@/components/voice/waveform";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/doctors", label: "Doctors", icon: Stethoscope },
   { href: "/conversations", label: "Conversations", icon: MessagesSquare },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/appointments", label: "Appointments", icon: CalendarCheck },

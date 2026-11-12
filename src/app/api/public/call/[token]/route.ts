@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { loadClinicDirectory } from "@/lib/clinic-directory";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 /**
@@ -19,7 +20,7 @@ export async function GET(
 
   const { data: agent } = await supabaseAdmin
     .from("agents")
-    .select("name, business_type, is_active")
+    .select("name, business_type, is_active, user_id, language, voice")
     .eq("share_token", token)
     .single();
 
@@ -27,7 +28,12 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const directory = await loadClinicDirectory(agent.user_id);
+  const clinic = directory.clinic;
   return NextResponse.json({
-    agent: { name: agent.name, business_type: agent.business_type },
+    agent: { name: agent.name, business_type: agent.business_type, language: agent.language, voice: agent.voice },
+    clinic: clinic ? { clinic_name: clinic.clinic_name, address: clinic.address, phone: clinic.phone, opening_hours: clinic.opening_hours } : null,
+    doctors: directory.doctors,
+    directoryAvailable: directory.available,
   });
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { ApiError, apiErrorResponse, requireApiUser } from "@/lib/api-helpers";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { loadClinicDirectory } from "@/lib/clinic-directory";
 import { updateAgentSchema } from "@/lib/validations/agent";
 
 async function getOwnedAgentOr404(userId: string, agentId: string) {
@@ -27,7 +28,8 @@ export async function GET(
     const user = await requireApiUser();
     const { id } = await params;
     const agent = await getOwnedAgentOr404(user.id, id);
-    return NextResponse.json({ agent });
+    const directory = await loadClinicDirectory(user.id);
+    return NextResponse.json({ agent, clinic: directory.clinic, doctors: directory.doctors, directoryAvailable: directory.available });
   } catch (err) {
     return apiErrorResponse(err);
   }

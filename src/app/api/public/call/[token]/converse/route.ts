@@ -6,7 +6,7 @@ import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { callLimitForPlan, monthStartISO } from "@/lib/plan";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { generateAgentReply } from "@/lib/voice/respond";
+import { generateAgentReply, createVoiceStream } from "@/lib/voice/respond";
 import { transcriptTurnSchema } from "@/lib/validations/voice";
 
 /**
@@ -17,6 +17,8 @@ import { transcriptTurnSchema } from "@/lib/validations/voice";
  */
 
 const converseSchema = z.object({
+  stream: z.boolean().default(false),
+  language_hint: z.enum(['en', 'ur', 'pa', 'hi']).default('en'),
   history: z.array(transcriptTurnSchema).max(80).default([]),
 });
 
@@ -94,6 +96,7 @@ export async function POST(
     .eq("agent_id", agent.id);
 
   try {
+    if (input.stream) return await createVoiceStream(agent, knowledge ?? [], input.history, input.language_hint, req.signal);
     const reply = await generateAgentReply(agent, knowledge ?? [], input.history);
     return NextResponse.json({ reply });
   } catch (err) {

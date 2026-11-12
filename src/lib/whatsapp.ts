@@ -35,7 +35,8 @@ export async function sendAppointmentConfirmation(id: string, userId: string) {
   if (!claimed) return;
 
   const time = new Intl.DateTimeFormat('en-GB', { dateStyle: 'full', timeStyle: 'short', timeZone: clinic.timezone }).format(new Date(appointment.scheduled_at)) + ` (${clinic.timezone})`;
-  const values = [appointment.customer_name || 'Patient', clinic.clinic_name, appointment.service || 'Clinic visit', time, clinic.address, clinic.phone, clinic.opening_hours];
+  const service = (appointment.service || 'Clinic visit') + (appointment.doctor_name ? ` with ${appointment.doctor_name}` : '');
+  const values = [appointment.customer_name || 'Patient', clinic.clinic_name, service, time, clinic.address, clinic.phone, clinic.opening_hours];
   let status = 'unknown';
   let messageId: string | null = null;
   let failure: string | null = null;
