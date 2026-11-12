@@ -1,5 +1,6 @@
 import type { PublicDoctor } from '@/types/database';
 import { localized, type CallLanguage } from './language';
+import { extractIntroducedName, acknowledgeName } from './introduction';
 
 type Turn = { speaker: 'agent' | 'caller'; text: string };
 type Field = 'name' | 'phone' | 'concern' | 'doctor' | 'time' | 'consent';
@@ -15,6 +16,10 @@ const questions: Record<Field, [string, string, string, string]> = {
   consent: ['May the clinic send your appointment confirmation and clinic details to that number on WhatsApp?', 'کیا کلینک اس نمبر پر واٹس ایپ کے ذریعے اپائنٹمنٹ کی تصدیق اور کلینک کی معلومات بھیج سکتا ہے؟', 'کی کلینک ایس نمبر اُتے واٹس ایپ راہیں اپائنٹمنٹ دی تصدیق تے کلینک دی معلومات بھیج سکدا اے؟', 'क्या क्लिनिक इस नंबर पर व्हाट्सऐप से अपॉइंटमेंट की पुष्टि और क्लिनिक की जानकारी भेज सकता है?'],
 };
 
+function questionField(text: string) {
+  return (Object.keys(questions) as Field[]).find(key => questions[key].some(question => text.trim().endsWith(question)));
+}
+
 export function normalizeSpokenPhone(value: string) {
   const english = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
   let text = value.toLowerCase().replace(/\bplus\b|پلس|प्लस|ਪਲੱਸ/g, '+');
@@ -26,7 +31,7 @@ export function normalizeSpokenPhone(value: string) {
 }
 export function bookingIntent(text: string) {
   if (/\b(cancel|don't|do not|not booking)\b|منسوخ|کینسل|نہیں چاہیے|نہیں چاہ|नहीं चाहिए|रद्द/i.test(text)) return false;
-  return /\b(book|schedule|reserve)\b.{0,35}\b(appointment|visit|consultation)\b|\b(?:want|need|like|request)\b.{0,40}\bappointment\b|\bbook\b.{0,20}\b(?:with dr|doctor)\b|\b(?:want|like|need|can i)\b.{0,25}\bsee\b.{0,15}\bdr\b|^appointment(?: please)?[.!]?\s*$|ڈاکٹر.{0,80}(?:ملنا|وقت لینا)|اپائنٹمنٹ|بکنگ|وقت لینا|اپوائنٹمنٹ|अपॉइंटमेंट|अपॉइन्टमेंट/i.test(text);
+  return /\b(book|schedule|reserve)\b.{0,35}\b(appointment|visit|consultation)\b|\b(?:want|need|like|request)\b.{0,40}\bappointment\b|\bappointment\b.{0,30}\b(?:book|karni|krni|chahiye|chaiye|lena|leni)\b|\b(?:meri|mujhe|mujhy|mjy)\b.{0,40}\bappointment\b|\bbook\b.{0,20}\b(?:with dr|doctor)\b|\b(?:want|like|need|can i)\b.{0,25}\bsee\b.{0,15}\bdr\b|^appointment(?: please)?[.!]?\s*$|ڈاکٹر.{0,80}(?:ملنا|وقت لینا)|اپائنٹمنٹ|اپائنمنٹ|اپائمنٹ|بکنگ|وقت لینا|اپوائنٹمنٹ|अपॉइंटमेंट|अपॉइन्टमेंट/i.test(text);
 }
 export function readBookingDraft(history: Turn[], doctors: PublicDoctor[] = []) {
   const draft = { active: false, cancelled: false, name: null as string | null, phone: null as string | null, concern: null as string | null, doctor: null as string | null, doctorAnswered: false, time: null as string | null, consent: null as boolean | null };
@@ -34,12 +39,15 @@ export function readBookingDraft(history: Turn[], doctors: PublicDoctor[] = []) 
     const turn = history[index]; if (turn.speaker !== 'caller') continue;
     if (cancellation(turn.text)) { Object.assign(draft, { active: false, cancelled: true, name: null, phone: null, concern: null, doctor: null, doctorAnswered: false, time: null, consent: null }); continue; }
     if (bookingIntent(turn.text)) { draft.active = true; draft.cancelled = false; }
+    const introduction = extractIntroducedName(turn.text);
+    if (introduction) draft.name = introduction;
     if (!draft.active) continue;
     const requested = doctors.find(doctor => turn.text.toLowerCase().includes(doctor.name.toLowerCase()));
     if (requested && bookingIntent(turn.text)) { draft.doctor = requested.name; draft.doctorAnswered = true; }
+    if (introduction) continue;
     const previous = history[index - 1];
     if (previous?.speaker !== 'agent') continue;
-    const field = (Object.keys(questions) as Field[]).find(key => questions[key].includes(previous.text.trim()));
+    const field = questionField(previous.text);
     if (!field || !turn.text.trim()) continue;
     const text = turn.text.trim();
     if (/\b(change|correct|update)\b|تبدیل|درست|बदल|सही/i.test(text)) continue;
@@ -75,9 +83,12 @@ export function answerBookingFlow(history: Turn[], doctors: PublicDoctor[], lang
     if (field) return { reply: localized(language, ...questions[field]), draft };
   }
   // Let explicit information requests temporarily interrupt the booking flow.
-  if (/^(?:how many|tell me|what (?:are|is)|where|who|how much)\b|کتنے|کہاں|بارے میں|تجربہ|कितने|कहाँ|बारे में/i.test(latest) && !bookingIntent(latest)) return null;
+  if (/^(?:how many|tell me|what (?:are|is)|where|who|how much|which doctor)\b|کتنے|کہاں|بارے میں|تجربہ|कितने|कहाँ|बारे में/i.test(latest) && !bookingIntent(latest)) return null;
   const field: Field | null = !draft.name ? 'name' : !draft.phone ? 'phone' : !draft.concern ? 'concern' : !draft.doctorAnswered ? 'doctor' : !draft.time ? 'time' : draft.consent === null ? 'consent' : null;
-  if (field) return { reply: localized(language, ...questions[field]), draft };
+  if (field) {
+    const justNamed = extractIntroducedName(latest) || (questionField(history.at(-2)?.text ?? '') === 'name' ? draft.name : null);
+    return { reply: (justNamed ? acknowledgeName(justNamed, language) + ' ' : '') + localized(language, ...questions[field]), draft };
+  }
   return { draft, reply: localized(language,
     `Thank you. Your request details are ready for reception. End the call to submit them; the clinic will verify the doctor and slot${draft.consent ? ' before a WhatsApp confirmation can be sent' : ''}.`,
     'شکریہ، آپ کی درخواست کی تفصیلات تیار ہیں۔ جمع کروانے کے لیے کال ختم کریں؛ ڈاکٹر اور وقت کی تصدیق کلینک کرے گا۔',

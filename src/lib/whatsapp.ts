@@ -1,9 +1,12 @@
 import 'server-only';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 
-export function whatsappConfigured() {
-  return Boolean(process.env.META_ACCESS_TOKEN && process.env.META_PHONE_NUMBER_ID && process.env.WHATSAPP_APPOINTMENT_TEMPLATE && process.env.META_GRAPH_API_VERSION && process.env.META_APP_SECRET && process.env.META_VERIFY_TOKEN);
+export function whatsappSetup() {
+  const required = ['META_ACCESS_TOKEN', 'META_PHONE_NUMBER_ID', 'WHATSAPP_APPOINTMENT_TEMPLATE', 'META_GRAPH_API_VERSION', 'META_APP_SECRET', 'META_VERIFY_TOKEN'];
+  const missing = required.filter(name => !process.env[name]?.trim());
+  return { configured: missing.length === 0, missing };
 }
+export function whatsappConfigured() { return whatsappSetup().configured; }
 
 // Only confirmed appointments are eligible. A database claim prevents duplicate
 // sends when confirmation requests race or the user clicks twice.

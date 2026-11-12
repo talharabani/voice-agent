@@ -2,7 +2,7 @@ import type { PublicDoctor } from '@/types/database';
 import { localized, type CallLanguage } from './language';
 
 type Clinic = { clinic_name: string; address: string; phone: string; opening_hours: string };
-export type DirectoryAnswer = { reply: string; doctorIds: string[]; kind: 'directory' | 'clinic' | 'urgent' };
+export type DirectoryAnswer = { reply: string; doctorIds: string[]; kind: 'directory' | 'clinic' | 'urgent' | 'availability' };
 export function matchesTerm(text: string, term: string) {
   const escaped = term.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return Boolean(escaped) && new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(text);
@@ -25,6 +25,11 @@ export function answerFromDirectory(text: string, doctors: PublicDoctor[], clini
   if (doctorQuestion && !available) return { kind: 'directory', doctorIds: [], reply: say('The doctor directory is unavailable. Please contact reception for verified details.', 'ڈاکٹروں کی فہرست ابھی دستیاب نہیں۔ درست معلومات کے لیے استقبالیہ سے رابطہ کریں۔', 'ڈاکٹراں دی فہرست ہن دستیاب نہیں۔ درست معلومات لئی استقبالیہ نال رابطہ کرو۔', 'डॉक्टरों की सूची अभी उपलब्ध नहीं है। सही जानकारी के लिए रिसेप्शन से संपर्क करें।') };
   if (doctorQuestion && doctors.length === 0) return { kind: 'directory', doctorIds: [], reply: say('The clinic has not published doctor profiles yet. Reception can help you find the right clinician.', 'کلینک نے ابھی ڈاکٹروں کی تفصیلات شامل نہیں کیں۔ استقبالیہ مناسب ڈاکٹر کی معلومات دے سکتا ہے۔', 'کلینک نے ہجے ڈاکٹراں دیاں تفصیلاں نہیں پایاں۔ استقبالیہ مناسب ڈاکٹر دی معلومات دے سکدا اے۔', 'क्लिनिक ने अभी डॉक्टरों की जानकारी नहीं जोड़ी है। रिसेप्शन उपयुक्त डॉक्टर की जानकारी दे सकता है।') };
   if (doctorQuestion && countQuestion) return { kind: 'directory', doctorIds: doctors.map(d => d.id), reply: say(`Our published directory has ${doctors.length} doctor${doctors.length === 1 ? '' : 's'}. Their specialties and profiles are on your screen.`, `ہماری فہرست میں ${doctors.length} ڈاکٹر ہیں۔ ان کی تخصص اور پروفائل آپ کی اسکرین پر ہیں۔`, `ساڈی فہرست وچ ${doctors.length} ڈاکٹر نیں۔ انہاں دی مہارت تے پروفائل تہاڈی سکرین اُتے نیں۔`, `हमारी सूची में ${doctors.length} डॉक्टर हैं। उनकी विशेषज्ञता और प्रोफाइल आपकी स्क्रीन पर हैं।`) };
+  if ((doctorQuestion || named.length) && /available|availability|timings?|schedule|دستیاب|موجود|اوقات|ٹائمنگ|kab|waqt|उपलब्ध|समय/i.test(text)) {
+    const selected = named.length ? named : related.length ? related : doctors;
+    const hours = selected.slice(0, 3).map(doctor => `${doctor.name}: ${doctor.availability || say('timings not published', 'اوقات درج نہیں', 'اوقات درج نہیں', 'समय दर्ज नहीं')}`).join('; ');
+    return { kind: 'availability', doctorIds: selected.map(doctor => doctor.id), reply: say(`Published doctor timings: ${hours}. Reception must confirm the actual slot.`, `ڈاکٹروں کے درج شدہ اوقات: ${hours}۔ اصل وقت کی دستیابی کی تصدیق استقبالیہ کرے گا۔`, `ڈاکٹراں دے درج اوقات: ${hours}۔ اصل وقت دی دستیابی دی تصدیق استقبالیہ کرے گا۔`, `डॉक्टरों के दर्ज समय: ${hours}। वास्तविक स्लॉट की पुष्टि रिसेप्शन करेगा।`) };
+  }
   if (named.length || related.length) {
     const selected = named.length ? named : related;
     const doctor = selected[0];

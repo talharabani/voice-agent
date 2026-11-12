@@ -14,12 +14,14 @@ export function ClinicProfile() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
+  const [missing, setMissing] = useState<string[]>([]);
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/clinic', { signal: controller.signal }).then(async res => {
       const data = await res.json(); if (!res.ok) throw new Error(data.error ?? 'Could not load clinic profile');
       if (data.clinic) setClinic(data.clinic);
       setReady(data.whatsappConfigured);
+      setMissing(data.whatsappSetup?.missing ?? []);
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -48,6 +50,7 @@ export function ClinicProfile() {
         <div className="flex items-end"><Button disabled={loading || saving} type="submit">{saving ? 'Saving…' : 'Save clinic details'}</Button></div>
       </form>
       <div className="mt-7 rounded-xl border border-brand-border bg-brand-bg p-4 text-sm"><p className="font-medium">WhatsApp confirmations: {ready ? 'Configured' : 'Setup pending'}</p><p className="mt-1 text-brand-muted">{ready ? 'Confirm an exact slot in Appointments to send the patient a WhatsApp confirmation, when they have agreed to receive it.' : 'An approved Meta appointment template and WhatsApp sender credentials are needed before confirmations can be sent. Clinic details can be saved now.'}</p></div>
+      {!ready && <div className="mt-3 text-sm text-brand-muted"><p>Available now: open an appointment, choose WhatsApp message, review it, and press Send in WhatsApp. This manual option does not need Meta API approval.</p>{missing.length > 0 && <details className="mt-3 text-xs"><summary className="cursor-pointer">Automatic sending: administrator setup checklist</summary><ul className="mt-2 list-inside list-disc space-y-1">{missing.map(name => <li key={name}>{name}</li>)}</ul><p className="mt-2">Add these in the hosting environment and redeploy. The appointment template must be approved in Meta.</p></details>}</div>}
     </CardContent>
   </Card>;
 }

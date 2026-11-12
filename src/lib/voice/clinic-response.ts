@@ -5,6 +5,7 @@ import { answerFromDirectory } from '@/lib/voice/directory-answer';
 import { detectCallLanguage, greetingFor, localized, type CallLanguage } from '@/lib/voice/language';
 import { takeSpeechSegments } from '@/lib/voice/protocol';
 import { answerBookingFlow } from '@/lib/voice/booking-flow';
+import { extractIntroducedName, acknowledgeName } from '@/lib/voice/introduction';
 import type { AgentRow, KnowledgeDocRow } from '@/types/database';
 
 export type CallTurn = { speaker: 'agent' | 'caller'; text: string };
@@ -30,9 +31,12 @@ export async function prepareVoiceReply(agent: AgentRow, knowledge: KnowledgeDoc
   if (!history.length) return { language, doctorIds: [] as string[], reply: agent.greeting || greetingFor(agent.name, language), source: 'greeting', messages: [] as OllamaChatMessage[] };
   const directory = await loadClinicDirectory(agent.user_id);
   const direct = answerFromDirectory(latest, directory.doctors, directory.clinic, language, directory.available);
+  if (direct?.kind === 'availability') return { ...direct, language, source: direct.kind, messages: [] as OllamaChatMessage[] };
   const booking = direct?.kind === 'urgent' ? null : answerBookingFlow(history, directory.doctors, language);
   if (booking) return { language, doctorIds: direct?.doctorIds ?? [], reply: booking.reply, source: 'booking', messages: [] as OllamaChatMessage[], bookingDraft: booking.draft };
   if (direct) return { ...direct, language, source: direct.kind, messages: [] as OllamaChatMessage[] };
+  const introducedName = extractIntroducedName(latest);
+  if (introducedName) return { language, doctorIds: [] as string[], source: 'introduction', messages: [] as OllamaChatMessage[], reply: acknowledgeName(introducedName, language) + ' ' + localized(language, 'How can I help you today?', 'آپ کو کس سلسلے میں مدد چاہیے؟', 'تہاڈے لئی کی مدد کراں؟', 'आपको किस बारे में मदद चाहिए?') };
   const doctorFacts = directory.doctors.map(doctor => ({ name: doctor.name, specialty: doctor.specialty, experience_years: doctor.experience_years, availability: doctor.availability }));
   const clinicFacts = directory.clinic ? { name: directory.clinic.clinic_name, address: directory.clinic.address, phone: directory.clinic.phone, hours: directory.clinic.opening_hours, timezone: directory.clinic.timezone } : null;
   const messages: OllamaChatMessage[] = [

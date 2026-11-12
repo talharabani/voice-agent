@@ -97,6 +97,13 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     } catch { /* Visual microphone meter is optional; the call still works. */ }
   }
 
+  function changeListeningLanguage(value: string) {
+    inputOverrideRef.current = value; setInputOverride(value)
+    if (value) { const lang = value.split('-')[0] as CallLanguage; currentLanguage.current = lang; setLanguage(lang) }
+    try { localStorage.setItem('voxa-speech-input-language', value) } catch {}
+    if (active.current && phaseRef.current === 'listening') { stopRecognition(); listenRef.current() }
+  }
+
   function changeVoice(value: VoicePresetId) {
     presetRef.current = value; setPreset(value)
     try { localStorage.setItem('voxa-voice-style', value) } catch { /* optional */ }
@@ -131,7 +138,11 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       setName(data.agent.name); setClinic(data.clinic); setDoctors(data.doctors ?? []); setDirectoryAvailable(data.directoryAvailable !== false)
       const preferred = navigator.languages?.find(value => /^(ur|pa|hi)\b/.test(value)) ?? navigator.language
       const initial = /^(ur|pa|hi)\b/.exec(preferred)?.[1] as CallLanguage | undefined
-      const lang: CallLanguage = initial ?? (['ur', 'pa', 'hi'].includes(data.agent.language) ? data.agent.language : 'en')
+      let storedLocale = ''
+      try { storedLocale = localStorage.getItem('voxa-speech-input-language') ?? '' } catch {}
+      const configured = String(data.agent.language).split('-')[0]
+      const lang: CallLanguage = storedLocale ? storedLocale.split('-')[0] as CallLanguage : ['en', 'ur', 'pa', 'hi'].includes(configured) ? configured as CallLanguage : initial ?? 'en'
+      inputOverrideRef.current = storedLocale; setInputOverride(storedLocale)
       currentLanguage.current = lang; setLanguage(lang)
       const aliases: Record<string, VoicePresetId> = { nova: 'warm-female', echo: 'calm-male', alloy: 'gentle', shimmer: 'clear-female' }
       const defaultVoice = aliases[data.agent.voice] ?? data.agent.voice
@@ -355,6 +366,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
               {phase === 'speaking' && <button onClick={interrupt} className="mt-3 rounded-full border border-brand-border px-4 py-2 text-xs text-brand-muted hover:bg-brand-bg">Tap to speak</button>}
             </div>
             <div className="relative z-10 flex w-full flex-col items-center gap-4">
+              <label className="flex items-center gap-3 rounded-full border border-brand-border bg-brand-surface-raised px-4 py-2 text-xs"><Mic className="size-3.5" />Listening language<select aria-label="Microphone listening language" disabled={inCall && phase !== 'listening'} value={inputOverride || languageLocales[language]} onChange={event => changeListeningLanguage(event.target.value)} className="max-w-36 bg-transparent font-medium outline-none"><option value="ur-PK">Urdu</option><option value="en-US">English</option><option value="pa-PK">Punjabi</option><option value="hi-IN">Hindi</option></select></label>
               {!supported && <p role="alert" className="text-sm text-red-700">Open in Chrome or Edge and allow microphone access for audio calls.</p>}
               {error && <p role="alert" className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
               {note && <p role="status" className="text-xs text-brand-muted">{note}</p>}
@@ -367,7 +379,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
           <div className="rounded-2xl border border-brand-border bg-brand-surface p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="font-display text-base font-medium">Choose the voice's tone</h2><p className="mt-1 text-xs text-brand-muted">Language follows the conversation. Tone is your choice.</p></div><button disabled={inCall || !supported} onClick={() => void speak(language === 'en' ? 'Hello. Welcome to our clinic.' : language === 'hi' ? '\u0928\u092e\u0938\u094d\u0924\u0947' : '\u0627\u0644\u0633\u0644\u0627\u0645 \u0639\u0644\u06cc\u06a9\u0645')} className="rounded-full border border-brand-border px-3 py-2 text-xs disabled:opacity-40">Preview</button></div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{voicePresets.map(item => <button key={item.id} onClick={() => changeVoice(item.id)} aria-pressed={preset === item.id} className={`rounded-xl border p-3 text-left transition-colors ${preset === item.id ? 'border-brand-text bg-brand-text text-brand-bg' : 'border-brand-border hover:bg-brand-bg'}`}><p className="text-xs font-medium">{item.label}</p><p className={`mt-1 text-[10px] ${preset === item.id ? 'text-brand-bg/70' : 'text-brand-muted'}`}>{item.detail}</p></button>)}</div>
             <p className="mt-3 text-[11px] leading-relaxed text-brand-muted">{!selection.languageAvailable ? 'No matching voice is installed for this language. Audio pronunciation may be limited; install a matching system voice.' : !selection.styleAvailable ? `Using ${selection.voice?.name}. This device has no matching gender-labelled voice; the preset adjusts tone and speed.` : `Native voice: ${selection.voice?.name || 'System default'}. Youthful is a tone preset, not a recorded child voice.`}</p>
-            <details className="mt-3 text-xs text-brand-muted"><summary className="cursor-pointer">Device voice and speech input settings</summary><div className="mt-3 grid gap-3"><label className="grid gap-1.5">Native voice<select value={voiceUri} onChange={event => { setVoiceUri(event.target.value); voiceUriRef.current = event.target.value; try { localStorage.setItem('voxa-native-voice', event.target.value) } catch {} }} className="w-full rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic for this language</option>{voices.filter(voice => voice.lang.split('-')[0] === language).map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label><label className="grid gap-1.5">Speech input fallback<select value={inputOverride} onChange={event => { setInputOverride(event.target.value); inputOverrideRef.current = event.target.value }} className="rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic / current conversation</option><option value="en-US">English</option><option value="ur-PK">Urdu</option><option value="pa-PK">Punjabi (Pakistan)</option><option value="hi-IN">Hindi</option></select></label><p>Browser recognition uses one listening language at a time. If your first words are misheard, choose the input fallback. Replies adapt to the recognized language.</p></div></details>
+            <details className="mt-3 text-xs text-brand-muted"><summary className="cursor-pointer">Device voice and speech input settings</summary><div className="mt-3 grid gap-3"><label className="grid gap-1.5">Native voice<select value={voiceUri} onChange={event => { setVoiceUri(event.target.value); voiceUriRef.current = event.target.value; try { localStorage.setItem('voxa-native-voice', event.target.value) } catch {} }} className="w-full rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic for this language</option>{voices.filter(voice => voice.lang.split('-')[0] === language).map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label><label className="grid gap-1.5">Speech input fallback<select value={inputOverride} onChange={event => changeListeningLanguage(event.target.value)} className="rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic / current conversation</option><option value="en-US">English</option><option value="ur-PK">Urdu</option><option value="pa-PK">Punjabi (Pakistan)</option><option value="hi-IN">Hindi</option></select></label><p>Browser recognition uses one listening language at a time. If your first words are misheard, choose the input fallback. Replies adapt to the recognized language.</p></div></details>
           </div>
         </div>
         <aside className="space-y-5">

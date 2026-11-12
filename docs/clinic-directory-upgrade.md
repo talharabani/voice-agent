@@ -13,6 +13,10 @@ Run `supabase/006_doctor_directory.sql` in Supabase SQL Editor after the base sc
 
 ## Calls and languages
 
+Choose the agent's default microphone language when creating it. The public call screen also shows a visible Listening language selector and remembers the caller's choice. An explicit agent/caller preference takes priority over the browser locale. Urdu callers should begin in Urdu recognition mode; reply-language detection cannot repair words that were already misrecognized by an English speech recognizer.
+
+Natural self-introductions such as “میرا نام طلحہ ہے”, “mera naam Talha hai”, “मेरा नाम तल्हा है”, and “my name is Talha” are acknowledged directly and remembered before booking begins. Name acknowledgements can precede the next booking question without breaking the flow. Roman Urdu booking phrases and doctor-availability questions use direct saved-data/scripted responses.
+
 The cream/sage clinic reception page shows clinic contact details, a microphone-reactive orb, call controls and doctor profile cards. It has no chat input or live transcript. Doctor questions highlight the relevant profiles; mobile callers can jump to the highlighted profile. Six voice-tone presets and optional native voice selection are available. Presets use available system voices, pitch and rate. Youthful is a style, not an actual child voice; a requested male/female voice depends on what is installed.
 
 Recognized English, Urdu, Punjabi (Shahmukhi) and Hindi text select the reply language. The first listening language comes from the device or agent configuration. Browser recognition listens in **one language at a time** and cannot reliably detect every first utterance automatically. Device/input fallback settings allow recovery from misheard speech. Missing Urdu/Punjabi audio voices are reported. These are browser constraints: [recognition language](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition/lang), [voice language](https://developer.mozilla.org/en-US/docs/Web/API/SpeechSynthesisVoice/lang).
@@ -34,6 +38,12 @@ Only clinic-confirmed appointments are eligible for a WhatsApp confirmation. The
 ## WhatsApp activation
 
 The account still needs an approved Meta appointment template and sender credentials. Until then, messages are not sent and the dashboard reports setup pending. See [existing WhatsApp setup](clinic-voice-setup.md#whatsapp-configuration). The application uses one configured platform sender; it does not provision separate WhatsApp senders for each clinic.
+
+### Manual WhatsApp sending, available without Meta approval
+
+Appointments has a **WhatsApp message** action. It prepares the patient name, doctor, clinic address/contact/hours and appointment time for review, then opens an [official WhatsApp click-to-chat link](https://faq.whatsapp.com/5913398998672934). Staff must press Send in WhatsApp. Draft creation does not update delivery status or automatically send anything. Pending requests are explicitly labelled unconfirmed; a confirmed message requires a scheduled slot. A valid international number and recorded WhatsApp consent are required. Patient concern text is excluded. Only the appointment owner can prepare the draft.
+
+Settings shows which environment variable names are missing for automatic sending; no token values are exposed. The automatic Meta sender remains the existing confirmation pipeline and requires an approved template plus credentials before it can deliver messages.
 
 ## Validation
 

@@ -2,14 +2,14 @@ import { NextResponse } from 'next/server';
 import { apiErrorResponse, requireApiUser } from '@/lib/api-helpers';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { clinicSchema } from '@/lib/validations/clinic';
-import { whatsappConfigured } from '@/lib/whatsapp';
+import { whatsappConfigured, whatsappSetup } from '@/lib/whatsapp';
 
 export async function GET() {
   try {
     const user = await requireApiUser();
     const { data, error } = await supabaseAdmin.from('clinic_profiles').select('*').eq('user_id', user.id).maybeSingle();
     if (error) throw error;
-    return NextResponse.json({ clinic: data, whatsappConfigured: whatsappConfigured() });
+    return NextResponse.json({ clinic: data, whatsappConfigured: whatsappConfigured(), whatsappSetup: whatsappSetup() });
   } catch (error) { return apiErrorResponse(error); }
 }
 

@@ -60,6 +60,7 @@ export default function AgentsPage() {
   const [greeting, setGreeting] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [voice, setVoice] = useState("warm-female");
+  const [speechLanguage, setSpeechLanguage] = useState('ur');
 
   const load = useCallback(async () => {
     try {
@@ -88,6 +89,7 @@ export default function AgentsPage() {
         body: JSON.stringify({
           name,
           voice,
+          language: speechLanguage,
           ...(businessType ? { business_type: businessType } : {}),
           ...(greeting ? { greeting } : {}),
           ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
@@ -211,6 +213,7 @@ export default function AgentsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="flex flex-col gap-2"><Label htmlFor="agent-speech-language">Default microphone language</Label><Select value={speechLanguage} onValueChange={setSpeechLanguage}><SelectTrigger id="agent-speech-language"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ur">Urdu</SelectItem><SelectItem value="en">English</SelectItem><SelectItem value="pa">Punjabi</SelectItem><SelectItem value="hi">Hindi</SelectItem></SelectContent></Select><p className="text-xs text-brand-muted">Start with the language your patients speak most. Callers can change it before speaking.</p></div>
                 <DialogFooter>
                   <Button type="submit" disabled={saving}>
                     {saving ? "Creating…" : "Create agent"}

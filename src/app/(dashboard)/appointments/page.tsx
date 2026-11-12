@@ -5,6 +5,7 @@ import { CalendarCheck, MessageCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AppointmentHandoff } from '@/components/dashboard/appointment-handoff';
+import { WhatsAppDraft } from '@/components/dashboard/whatsapp-draft';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,6 +72,7 @@ export default function AppointmentsPage() {
         <div className="my-5 grid gap-4 text-sm sm:grid-cols-3"><div><p className="text-brand-muted">Service</p><p className="mt-1">{appointment.service || 'Not specified'}</p></div><div><p className="text-brand-muted">Requested time</p><p className="mt-1">{appointment.requested_time || 'Not specified'}</p></div><div><p className="text-brand-muted">Confirmed slot (your local time)</p><p className="mt-1">{appointment.scheduled_at ? new Date(appointment.scheduled_at).toLocaleString() : 'Awaiting clinic review'}</p></div></div>
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-brand-border pt-4"><div className="text-sm"><p className="flex items-center gap-2"><MessageCircle className="size-4 text-brand-teal" />{messageLabels[appointment.whatsapp_status] || 'Not sent'}</p>{appointment.whatsapp_error && <p className="mt-1 max-w-xl text-xs text-brand-muted">{appointment.whatsapp_error}</p>}</div><div className="flex flex-wrap gap-2">
           <AppointmentHandoff id={appointment.id} />
+          {['requested', 'confirmed'].includes(appointment.status) && <WhatsAppDraft id={appointment.id} />}
           {appointment.status === 'requested' && <Button disabled={!!busy} onClick={() => openConfirm(appointment)}><CalendarCheck className="size-4" />Confirm appointment</Button>}
           {appointment.status === 'confirmed' && <>{['not_sent', 'failed', 'setup_required'].includes(appointment.whatsapp_status) && <Button disabled={!!busy} variant="outline" onClick={() => openConfirm(appointment)}>Review confirmation</Button>}<Button variant="outline" disabled={!!busy} onClick={() => update(appointment.id, { status: 'completed' })}>Mark completed</Button>{['not_sent', 'failed', 'setup_required'].includes(appointment.whatsapp_status) && <Button disabled={!!busy} variant="outline" onClick={() => update(appointment.id, { notify: true })}>Send WhatsApp</Button>}</>}
           {['requested', 'confirmed'].includes(appointment.status) && <Button variant="ghost" disabled={!!busy} onClick={() => update(appointment.id, { status: 'cancelled' })}>Cancel booking</Button>}
