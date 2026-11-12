@@ -1,5 +1,7 @@
 # Clinic directory and multilingual voice upgrade
 
+Audio playback now uses the owner-approved online Urdu speech helper, with device voices as a fallback. See [Urdu audio testing](urdu-audio-testing.md) for the current provider, startup command and verified playback flow.
+
 ## Required migration
 
 Run `supabase/006_doctor_directory.sql` in Supabase SQL Editor after the base schema, `002_appointments.sql` and `005_clinic_whatsapp.sql`. It creates the doctor directory and adds requested doctor, patient concern, reception handoff and assigned doctor fields to appointments. All doctor/profile access is scoped to the authenticated account or the public call link's agent owner. RLS remains enabled with server-only service-role access.

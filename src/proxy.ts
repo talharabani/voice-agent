@@ -8,6 +8,7 @@ const isPublicRoute = createRouteMatcher([
   "/api/webhooks(.*)",
   "/api/telephony(.*)",
   "/api/public(.*)",
+  "/api/voice/speech",
   "/call(.*)",
 ]);
 

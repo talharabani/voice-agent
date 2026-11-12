@@ -16,5 +16,5 @@ export function localized(language: CallLanguage, english: string, urdu: string,
   return ({ en: english, ur: urdu, pa: punjabi, hi: hindi })[language];
 }
 export function greetingFor(name: string, language: CallLanguage) {
-  return localized(language, `Hello, welcome to ${name}. How can I help?`, `السلام علیکم، ${name} میں خوش آمدید۔ میں آپ کی کیا مدد کر سکتی ہوں؟`, `سلام، ${name} وچ جی آیاں نوں۔ میں تہاڈی کی مدد کراں؟`, `नमस्ते, ${name} में आपका स्वागत है। मैं आपकी क्या मदद करूँ?`);
+  return localized(language, `Hello, welcome to ${name}. How can I help?`, `السلام علیکم، ${name} میں خوش آمدید۔ آپ کو کس سلسلے میں مدد چاہیے؟`, `سلام، ${name} وچ جی آیاں نوں۔ تہاڈے لئی کی مدد ہووے؟`, `नमस्ते, ${name} में आपका स्वागत है। आपको किस बारे में मदद चाहिए?`);
 }

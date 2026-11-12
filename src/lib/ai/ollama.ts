@@ -11,7 +11,7 @@ export async function* ollamaChatStream(messages: OllamaChatMessage[], signal?: 
   const model = process.env.OLLAMA_VOICE_MODEL || 'qwen3:0.6b';
   const timeout = AbortSignal.timeout(Number(process.env.OLLAMA_TIMEOUT_MS || 120000));
   const response = await fetch(`${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/api/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
     body: JSON.stringify({ model, messages, stream: true, keep_alive: '30m', options: { num_predict: 128 }, ...(/^qwen3(?::|$)/i.test(model) ? { think: false } : {}) }),
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
@@ -42,7 +42,7 @@ export async function ollamaChat(
 
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
     body: JSON.stringify({
       model,
       messages,

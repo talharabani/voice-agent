@@ -161,3 +161,30 @@
 @keyframes clinic-orbit { to { transform: rotate(360deg); } }
 @keyframes clinic-card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .clinic-orbit-ring, .doctor-profile { animation: none !important; } .clinic-orbit.voice-listening .voice-orb { transform: none; } }
+
+/* Moving light field: a quiet idle glow, breathing listening halo and radiant voice. */
+.voice-light-scene { isolation: isolate; border: 0; }
+.voice-light-scene::before { border-color: #91ac7b30; inset: -8px; }
+.voice-light-scene .voice-orb { position: relative; z-index: 3; overflow: hidden; background: radial-gradient(circle at 30% 20%, #f1f5c9, #b5ce96 28%, #7caa7d 65%, #3c6b5b); box-shadow: inset 0 6px 20px #ffffff99, inset -12px -15px 28px #244d4a55, 0 12px 60px #729e6255; }
+.voice-aura { position: absolute; z-index: -2; inset: -78px; border-radius: 50%; background: conic-gradient(from 0deg, transparent, #9dbd6b50, #78aa9d35, transparent, #c9b56e40, #b7cb7745, transparent); filter: blur(27px); animation: voice-aurora-spin 16s linear infinite; opacity: .6; transition: opacity .5s; }
+.voice-light-rays { position: absolute; z-index: -1; inset: -55px; border-radius: 50%; background: repeating-conic-gradient(from 12deg, transparent 0deg 12deg, #a0bd6a38 14deg 17deg, transparent 20deg 36deg); mask-image: radial-gradient(circle, transparent 27%, #000 38%, transparent 72%); animation: voice-aurora-spin 32s linear infinite; opacity: .45; transition: opacity .4s, filter .4s; }
+.voice-light-rays-second { inset: -85px; background: repeating-conic-gradient(from 38deg, transparent 0deg 26deg, #5b9c8a38 28deg 30deg, transparent 33deg 50deg); animation-direction: reverse; animation-duration: 24s; filter: blur(2px); }
+.voice-light-halo { position: absolute; z-index: 0; inset: 8px; border: 1px solid #9db76a55; border-radius: 50%; box-shadow: 0 0 24px #9db76a20, inset 0 0 18px #c7d49120; animation: voice-halo-breathe 4s ease-in-out infinite; }
+.voice-orb-flow { position: absolute; inset: -45%; background: conic-gradient(from 45deg, #e9f2b900, #f5f9cb90, #accd7a10, #265b5240, #bcdba550, #e9f2b900); filter: blur(13px); animation: voice-orb-flow 11s ease-in-out infinite alternate; }
+.voice-light-scene .clinic-orbit-ring { z-index: 1; inset: -23px; border-style: solid; border-color: #91ac7b20 #91ac7b70 #91ac7b15 #91ac7b10; animation-duration: 13s; }
+.voice-spark { position: absolute; z-index: 4; width: 4px; height: 4px; border-radius: 50%; background: #c6d69c; box-shadow: 0 0 12px 3px #a4c57866; animation: voice-spark-drift 7s ease-in-out infinite; }
+.voice-spark-one { top: 12%; left: 11%; }.voice-spark-two { bottom: 8%; right: 14%; animation-delay: -3s; }.voice-spark-three { top: 30%; right: -7%; animation-delay: -5s; }
+.voice-light-scene[data-phase="speaking"] .voice-aura { opacity: 1; animation-duration: 7s; }
+.voice-light-scene[data-phase="speaking"] .voice-light-rays { opacity: 1; animation-duration: 13s; filter: blur(.7px); }
+.voice-light-scene[data-phase="speaking"] .voice-light-halo { animation-duration: 1.6s; border-color: #779f5b99; }
+.voice-light-scene[data-phase="speaking"] .voice-orb-flow { animation-duration: 2.8s; }
+.voice-light-scene[data-phase="listening"] .voice-aura { opacity: calc(.55 + var(--mic-level) * 1.5); }
+.voice-light-scene[data-phase="listening"] .voice-light-halo { transform: scale(calc(1 + var(--mic-level) * .55)); }
+.voice-light-scene[data-phase="thinking"] .voice-light-rays { animation-duration: 6s; opacity: .7; }
+.voice-light-scene[data-phase="muted"] .voice-aura, .voice-light-scene[data-phase="ended"] .voice-aura { opacity: .2; }
+.voice-light-scene[data-phase="muted"] .voice-light-rays, .voice-light-scene[data-phase="ended"] .voice-light-rays { opacity: .15; }
+@keyframes voice-aurora-spin { to { transform: rotate(360deg); } }
+@keyframes voice-orb-flow { from { transform: rotate(-30deg) translate(-3%, 2%); } to { transform: rotate(150deg) translate(5%, -3%); } }
+@keyframes voice-halo-breathe { 50% { opacity: .5; scale: 1.09; } }
+@keyframes voice-spark-drift { 50% { transform: translate(10px, -16px); opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .voice-light-scene *, .voice-light-scene .voice-orb { animation: none !important; transition: none !important; } }

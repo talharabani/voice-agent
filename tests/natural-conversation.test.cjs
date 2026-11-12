@@ -49,3 +49,17 @@ test('self-introduction acknowledgement bypasses model inference', async () => {
   const reply = await api.prepareVoiceReply({ name: 'Reception', user_id: 'owner' }, [], [{ speaker: 'caller', text: 'میرا نام طلحہ ہے' }], 'ur');
   assert.equal(reply.source, 'introduction'); assert.match(reply.reply, /آپ کا نام طلحہ ہے/);
 });
+
+test('a quick Urdu hello does not wait for model or directory lookups', async () => {
+  const api = load('src/lib/voice/clinic-response.ts', {
+    '@/lib/clinic-directory': { async loadClinicDirectory() { throw new Error('No directory lookup needed for hello'); } },
+    '@/lib/ai/ollama': { ollamaChat() { throw new Error('No model needed for hello'); } },
+  });
+  const result = await api.prepareVoiceReply({ name: 'Clinic', user_id: 'owner' }, [], [{ speaker: 'caller', text: 'السلام علیکم' }], 'ur');
+  assert.equal(result.source, 'greeting'); assert.match(result.reply, /خوش آمدید/);
+});
+test('an English custom greeting is not passed to an Urdu speaker voice', async () => {
+  const api = load('src/lib/voice/clinic-response.ts', { '@/lib/ai/ollama': {}, '@/lib/clinic-directory': {} });
+  const result = await api.prepareVoiceReply({ name: 'Clinic', greeting: 'Hello, welcome to our clinic' }, [], [], 'ur');
+  assert.match(result.reply, /السلام علیکم/); assert.doesNotMatch(result.reply, /Hello/);
+});

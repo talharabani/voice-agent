@@ -4,14 +4,16 @@ import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethoscope, ShieldCheck, AudioLines } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Waveform } from '@/components/voice/waveform'
+import { primeSpeaker, playOnlineSpeech, prepareSpeechAudio } from '@/lib/voice/online-playback'
+import { playBrowserSpeech } from '@/lib/voice/browser-playback'
 import { DoctorCard } from '@/components/voice/doctor-card'
 import { readJsonLines } from '@/lib/voice/protocol'
-import { detectCallLanguage, languageLocales, localized, type CallLanguage } from '@/lib/voice/language'
+import { detectCallLanguage, languageLocales, localized, greetingFor, type CallLanguage } from '@/lib/voice/language'
 import { voicePresets, selectBrowserVoice, type VoicePresetId } from '@/lib/voice/presets'
 import type { PublicDoctor } from '@/types/database'
 
 type Turn = { speaker: 'caller' | 'agent'; text: string }
-type Phase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended'
+type Phase = 'idle' | 'connecting' | 'listening' | 'thinking' | 'buffering' | 'speaking' | 'ended'
 interface Recognition {
   lang: string; continuous: boolean; interimResults: boolean
   onresult: ((event: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null
@@ -42,6 +44,12 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   const voiceUriRef = useRef('')
   const inputOverrideRef = useRef('')
   const pendingSpoken = useRef('')
+  const lastReplyText = useRef('')
+  const [audioProblem, setAudioProblem] = useState(false)
+  const speaker = useRef<HTMLAudioElement | null>(null)
+  const [audioProvider, setAudioProvider] = useState('online')
+  const [previewing, setPreviewing] = useState(false)
+  const [previewAudible, setPreviewAudible] = useState(false)
   const requestStarted = useRef(0)
   const [responseTime, setResponseTime] = useState<number | null>(null)
   const orbRef = useRef<HTMLDivElement>(null)
@@ -120,6 +128,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     stopRecognition()
     window.speechSynthesis?.cancel()
     finishSpeech.current?.()
+    speaker.current?.pause()
     stream.current?.getTracks().forEach(track => track.stop())
     stream.current = null
     cancelAnimationFrame(animationFrame.current)
@@ -170,12 +179,14 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     requestStarted.current = performance.now()
     let playback = Promise.resolve()
     const enqueue = (text: string) => {
+      const prepared = prepareSpeechAudio({ text, language: currentLanguage.current, style: presetRef.current, token, agentId, signal: request.current!.signal })
+      void prepared.catch(() => {})
       playback = playback.then(async () => {
         if (!active.current || generation.current !== session) return
-        pendingSpoken.current += (pendingSpoken.current ? ' ' : '') + text
-        if (phaseRef.current !== 'speaking') setResponseTime((performance.now() - requestStarted.current) / 1000)
-        changePhase('speaking'); await speak(text)
+        lastReplyText.current = text
+        changePhase('buffering'); await speak(text, true, prepared)
       })
+      void playback.catch(() => {})
     }
     const res = await fetch(token ? `${base}/converse` : '/api/voice/converse', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -203,25 +214,49 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     return { reply, playback }
   }
 
-  function speak(text: string) {
-    return new Promise<void>(resolve => {
-      window.speechSynthesis.cancel()
-      const utterance = new SpeechSynthesisUtterance(text)
-      const selection = selectBrowserVoice(window.speechSynthesis.getVoices(), currentLanguage.current, presetRef.current, voiceUriRef.current)
-      utterance.lang = languageLocales[currentLanguage.current]
-      utterance.rate = selection.preset.rate; utterance.pitch = selection.preset.pitch
-      if (selection.voice) utterance.voice = selection.voice
-      let finished = false
-      const done = () => {
-        if (finished) return
-        finished = true; clearTimeout(timer); finishSpeech.current = null; resolve()
+  async function speak(text: string, track = false, prepared?: Promise<Blob>) {
+    const control = new AbortController()
+    const abortSpeech = () => control.abort()
+    finishSpeech.current = abortSpeech
+    const onStart = () => {
+      setAudioProblem(false)
+      if (!track) setPreviewAudible(true)
+      if (track) { pendingSpoken.current += (pendingSpoken.current ? ' ' : '') + text; changePhase('speaking'); setResponseTime((performance.now() - requestStarted.current) / 1000) }
+    }
+    try {
+      speaker.current ??= new Audio()
+      try {
+        await playOnlineSpeech({ audio: speaker.current, text, language: currentLanguage.current, style: presetRef.current, token, agentId, signal: control.signal, onStart, prepared })
+        setAudioProvider('online')
+      } catch (onlineError) {
+        if (control.signal.aborted) throw onlineError
+        const native = selectBrowserVoice(window.speechSynthesis?.getVoices() ?? [], currentLanguage.current, presetRef.current, voiceUriRef.current)
+        if (!native.voice) throw onlineError
+        await playBrowserSpeech({ text, language: currentLanguage.current, preset: presetRef.current, voiceUri: voiceUriRef.current, signal: control.signal, onStart })
+        setAudioProvider('browser')
       }
-      const timer = setTimeout(() => { window.speechSynthesis.cancel(); done() }, Math.max(10000, text.length * 150))
-      finishSpeech.current = done
-      utterance.onend = done
-      utterance.onerror = done
-      window.speechSynthesis.speak(utterance)
-    })
+    } catch (error) {
+      if (!control.signal.aborted) setAudioProblem(true)
+      throw error
+    } finally { if (finishSpeech.current === abortSpeech) finishSpeech.current = null; if (!track) setPreviewAudible(false) }
+  }
+
+  async function replayAudio() {
+    if (!lastReplyText.current) return
+    stopRecognition(); setError(''); requestStarted.current = performance.now(); window.speechSynthesis?.resume()
+    speaker.current ??= new Audio(); await primeSpeaker(speaker.current)
+    try { await speak(lastReplyText.current, active.current) }
+    catch (error) { setError(error instanceof Error ? error.message : 'Audio playback failed.') }
+    finally { if (active.current) listenRef.current() }
+  }
+
+  async function previewVoice() {
+    if (previewing || active.current) return
+    setPreviewing(true)
+    speaker.current ??= new Audio(); await primeSpeaker(speaker.current)
+    const sample = greetingFor(clinic?.clinic_name || name || 'our clinic', currentLanguage.current)
+    lastReplyText.current = sample
+    try { await speak(sample); setError('') } catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setError(error instanceof Error ? error.message : 'Voice preview failed.') } finally { setPreviewing(false) }
   }
 
   listenRef.current = () => {
@@ -285,7 +320,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   }
 
   async function startCall() {
-    if (active.current || saving) return
+    if (active.current || saving || previewing) return
     const session = ++generation.current
     active.current = true; mute.current = false; setMuted(false)
     history.current = []; setError(''); setNote(''); setElapsed(0); setBookingDraft(null); setHighlighted([])
@@ -293,6 +328,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     // Prime speech synthesis during the user gesture for mobile browsers.
     window.speechSynthesis.resume()
     try {
+      speaker.current ??= new Audio(); await primeSpeaker(speaker.current)
       const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
       if (!active.current || session !== generation.current) { media.getTracks().forEach(t => t.stop()); return }
       stream.current = media
@@ -341,7 +377,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   }
 
   const inCall = phase !== 'idle' && phase !== 'ended'
-  const label = phase === 'listening' && muted ? 'Microphone muted' : ({ idle: 'A conversation, just a call away.', connecting: 'Connecting your call', listening: 'Listening to you', thinking: 'One moment', speaking: `${name || 'Your agent'} is speaking`, ended: 'Call ended' })[phase]
+  const label = phase === 'listening' && muted ? 'Microphone muted' : ({ idle: 'A conversation, just a call away.', connecting: 'Connecting your call', listening: 'Listening to you', thinking: 'One moment', buffering: 'Preparing speaker audio', speaking: `${name || 'Your agent'} is speaking`, ended: 'Call ended' })[phase]
 
   const selection = selectBrowserVoice(voices, language, preset, voiceUri)
   const orderedDoctors = [...doctors].sort((a, b) => Number(highlighted.includes(b.id)) - Number(highlighted.includes(a.id)))
@@ -354,32 +390,33 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     <section className="clinic-call-shell mx-auto w-full max-w-7xl text-brand-text">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-brand-border bg-brand-surface px-5 py-4 sm:px-7">
         <div className="flex items-center gap-3"><div className="flex size-11 items-center justify-center rounded-xl bg-brand-teal/20"><Stethoscope className="size-5" /></div><div><p className="font-display text-lg font-semibold">{clinic?.clinic_name || name || 'Clinic reception'}</p><p className="mt-0.5 font-data text-[10px] uppercase tracking-[.18em] text-brand-muted">Your care starts with a conversation</p></div></div>
-        <div className="flex items-center gap-2 rounded-full border border-brand-border bg-brand-surface-raised px-3 py-2 text-xs"><span className={`size-2 rounded-full ${inCall ? 'animate-pulse bg-brand-teal' : 'bg-brand-muted/50'}`} />{inCall ? 'Reception call connected' : 'Virtual reception'}</div>
+        <div className="flex items-center gap-2 rounded-full border border-brand-border bg-brand-surface-raised px-3 py-2 text-xs"><span className={`size-2 rounded-full ${inCall ? 'animate-pulse bg-brand-teal' : 'bg-brand-muted/50'}`} />{phase === 'connecting' ? 'Connecting to reception' : inCall ? 'Reception call connected' : 'Virtual reception'}</div>
       </header>
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
         <div className="space-y-5 lg:sticky lg:top-6">
           <div className="clinic-voice-room relative flex min-h-[590px] flex-col items-center justify-between overflow-hidden rounded-[2rem] border border-brand-border bg-brand-surface p-6 text-center sm:p-8">
             <div className="relative z-10 flex w-full items-center justify-between"><span className="flex items-center gap-2 font-data text-[10px] uppercase tracking-[.18em]"><Waveform />VOXA / Care line</span><span className="flex items-center gap-1.5 text-xs text-brand-muted"><ShieldCheck className="size-3.5" />Clinic receptionist</span></div>
             <div className="relative z-10 flex flex-col items-center py-6"><p className="font-data text-[10px] uppercase tracking-[.24em] text-brand-muted">A familiar voice. A little more care.</p><h1 className="mt-3 font-display text-3xl tracking-tight sm:text-4xl">{name || 'Connecting...'}</h1>
-              <div ref={orbRef} className={`voice-orbit clinic-orbit my-8 ${phase === 'speaking' ? 'voice-speaking' : phase === 'listening' && !muted ? 'voice-listening' : ''}`} aria-hidden="true"><span className="clinic-orbit-ring" /><div className="voice-orb"><AudioLines className={`size-20 stroke-[1] text-brand-text/70 ${phase === 'thinking' ? 'animate-pulse' : ''}`} /></div><span className="clinic-orbit-dot" /></div>
-              <p role="status" aria-live="polite" className="text-base">{label}</p><p className="mt-2 font-data text-xs tabular-nums text-brand-muted">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</p>
+              <div ref={orbRef} data-phase={previewAudible ? 'speaking' : muted && phase === 'listening' ? 'muted' : phase} className={`voice-orbit clinic-orbit voice-light-scene my-8 ${phase === 'speaking' || previewAudible ? 'voice-speaking' : phase === 'listening' && !muted ? 'voice-listening' : ''}`} aria-hidden="true"><span className="voice-aura" /><span className="voice-light-rays" /><span className="voice-light-rays voice-light-rays-second" /><span className="voice-light-halo" /><span className="clinic-orbit-ring" /><div className="voice-orb"><span className="voice-orb-flow" /><AudioLines className={`relative z-10 size-16 stroke-[1] text-brand-text/65 ${phase === 'thinking' ? 'animate-pulse' : ''}`} /></div><span className="clinic-orbit-dot" /><span className="voice-spark voice-spark-one" /><span className="voice-spark voice-spark-two" /><span className="voice-spark voice-spark-three" /></div>
+              <p role="status" aria-live="polite" className="text-base">{previewAudible ? 'Voice preview playing' : label}</p><p className="mt-2 font-data text-xs tabular-nums text-brand-muted">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</p>
               {phase === 'speaking' && <button onClick={interrupt} className="mt-3 rounded-full border border-brand-border px-4 py-2 text-xs text-brand-muted hover:bg-brand-bg">Tap to speak</button>}
             </div>
             <div className="relative z-10 flex w-full flex-col items-center gap-4">
               <label className="flex items-center gap-3 rounded-full border border-brand-border bg-brand-surface-raised px-4 py-2 text-xs"><Mic className="size-3.5" />Listening language<select aria-label="Microphone listening language" disabled={inCall && phase !== 'listening'} value={inputOverride || languageLocales[language]} onChange={event => changeListeningLanguage(event.target.value)} className="max-w-36 bg-transparent font-medium outline-none"><option value="ur-PK">Urdu</option><option value="en-US">English</option><option value="pa-PK">Punjabi</option><option value="hi-IN">Hindi</option></select></label>
               {!supported && <p role="alert" className="text-sm text-red-700">Open in Chrome or Edge and allow microphone access for audio calls.</p>}
               {error && <p role="alert" className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+              {audioProblem && lastReplyText.current && <button onClick={replayAudio} className="rounded-full border border-brand-text bg-brand-text px-4 py-2 text-xs text-brand-bg">Enable audio / replay</button>}
               {note && <p role="status" className="text-xs text-brand-muted">{note}</p>}
               {highlighted.length > 0 && doctors.some(doctor => highlighted.includes(doctor.id)) && <button onClick={() => document.getElementById(`doctor-${highlighted[0]}`)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })} className="rounded-full border border-brand-teal bg-brand-teal/15 px-4 py-2 text-xs">View doctor profile</button>}
-              <div className="flex items-center justify-center gap-5">{inCall ? <><button onClick={toggleMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} className={`flex size-14 items-center justify-center rounded-full border border-brand-border ${muted ? 'bg-brand-text text-brand-bg' : 'bg-brand-bg'}`}>{muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}</button><button onClick={endCall} aria-label="End call" className="flex size-16 items-center justify-center rounded-full bg-[#B74434] text-white shadow-lg hover:bg-[#9c382b]"><PhoneOff className="size-6" /></button><span aria-label="Speaker enabled" className="flex size-14 items-center justify-center rounded-full border border-brand-border bg-brand-bg"><Volume2 className="size-5" /></span></> : <Button onClick={startCall} disabled={!name || !supported || saving} className="h-14 rounded-full px-8 text-base">{saving ? <Loader2 className="size-5 animate-spin" /> : <Phone className="size-5" />}{saving ? 'Saving call' : phase === 'ended' ? 'Call reception again' : 'Talk to reception'}</Button>}</div>
+              <div className="flex items-center justify-center gap-5">{inCall ? <><button onClick={toggleMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} className={`flex size-14 items-center justify-center rounded-full border border-brand-border ${muted ? 'bg-brand-text text-brand-bg' : 'bg-brand-bg'}`}>{muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}</button><button onClick={endCall} aria-label="End call" className="flex size-16 items-center justify-center rounded-full bg-[#B74434] text-white shadow-lg hover:bg-[#9c382b]"><PhoneOff className="size-6" /></button><span aria-label="Speaker output" className="flex size-14 items-center justify-center rounded-full border border-brand-border bg-brand-bg"><Volume2 className="size-5" /></span></> : <Button onClick={startCall} disabled={!name || !supported || saving || previewing} className="h-14 rounded-full px-8 text-base">{saving ? <Loader2 className="size-5 animate-spin" /> : <Phone className="size-5" />}{saving ? 'Saving call' : phase === 'ended' ? 'Call reception again' : 'Talk to reception'}</Button>}</div>
               <p className="max-w-sm text-xs leading-relaxed text-brand-muted">{inCall ? 'Speak naturally. Doctor profiles appear beside your call. Hang up to save your request.' : 'Ask about our doctors, clinic information or an appointment. No chat box, just your voice.'}</p>
               <div className="flex flex-wrap justify-center gap-3 font-data text-[9px] uppercase tracking-widest text-brand-muted"><span>Reply: {({en:'English',ur:'Urdu',pa:'Punjabi',hi:'Hindi'})[language]}</span>{responseTime !== null && <span>Last response {responseTime.toFixed(1)}s</span>}</div>
             </div>
           </div>
-          <div className="rounded-2xl border border-brand-border bg-brand-surface p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="font-display text-base font-medium">Choose the voice's tone</h2><p className="mt-1 text-xs text-brand-muted">Language follows the conversation. Tone is your choice.</p></div><button disabled={inCall || !supported} onClick={() => void speak(language === 'en' ? 'Hello. Welcome to our clinic.' : language === 'hi' ? '\u0928\u092e\u0938\u094d\u0924\u0947' : '\u0627\u0644\u0633\u0644\u0627\u0645 \u0639\u0644\u06cc\u06a9\u0645')} className="rounded-full border border-brand-border px-3 py-2 text-xs disabled:opacity-40">Preview</button></div>
+          <div className="rounded-2xl border border-brand-border bg-brand-surface p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="font-display text-base font-medium">Choose the voice's tone</h2><p className="mt-1 text-xs text-brand-muted">Language follows the conversation. Tone is your choice.</p></div><button disabled={inCall || !supported || !name || previewing} onClick={previewVoice} className="rounded-full border border-brand-border px-3 py-2 text-xs disabled:opacity-40">{previewing ? 'Playing...' : 'Preview'}</button></div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{voicePresets.map(item => <button key={item.id} onClick={() => changeVoice(item.id)} aria-pressed={preset === item.id} className={`rounded-xl border p-3 text-left transition-colors ${preset === item.id ? 'border-brand-text bg-brand-text text-brand-bg' : 'border-brand-border hover:bg-brand-bg'}`}><p className="text-xs font-medium">{item.label}</p><p className={`mt-1 text-[10px] ${preset === item.id ? 'text-brand-bg/70' : 'text-brand-muted'}`}>{item.detail}</p></button>)}</div>
-            <p className="mt-3 text-[11px] leading-relaxed text-brand-muted">{!selection.languageAvailable ? 'No matching voice is installed for this language. Audio pronunciation may be limited; install a matching system voice.' : !selection.styleAvailable ? `Using ${selection.voice?.name}. This device has no matching gender-labelled voice; the preset adjusts tone and speed.` : `Native voice: ${selection.voice?.name || 'System default'}. Youthful is a tone preset, not a recorded child voice.`}</p>
-            <details className="mt-3 text-xs text-brand-muted"><summary className="cursor-pointer">Device voice and speech input settings</summary><div className="mt-3 grid gap-3"><label className="grid gap-1.5">Native voice<select value={voiceUri} onChange={event => { setVoiceUri(event.target.value); voiceUriRef.current = event.target.value; try { localStorage.setItem('voxa-native-voice', event.target.value) } catch {} }} className="w-full rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic for this language</option>{voices.filter(voice => voice.lang.split('-')[0] === language).map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label><label className="grid gap-1.5">Speech input fallback<select value={inputOverride} onChange={event => changeListeningLanguage(event.target.value)} className="rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic / current conversation</option><option value="en-US">English</option><option value="ur-PK">Urdu</option><option value="pa-PK">Punjabi (Pakistan)</option><option value="hi-IN">Hindi</option></select></label><p>Browser recognition uses one listening language at a time. If your first words are misheard, choose the input fallback. Replies adapt to the recognized language.</p></div></details>
+            <p className="mt-3 text-[11px] leading-relaxed text-brand-muted">{audioProvider === 'online' ? 'Online neural speech. Urdu uses Uzma (female) or Asad (male); tone presets adjust delivery. Youthful is a style, not a child recording.' : !selection.languageAvailable ? 'No matching voice is installed for this language. Audio pronunciation may be limited; install a matching system voice.' : !selection.styleAvailable ? `Using ${selection.voice?.name}. This device has no matching gender-labelled voice; the preset adjusts tone and speed.` : `Native voice: ${selection.voice?.name || 'System default'}. Youthful is a tone preset, not a recorded child voice.`}</p>
+            <details className="mt-3 text-xs text-brand-muted"><summary className="cursor-pointer">Device voice and speech input settings</summary><div className="mt-3 grid gap-3"><label className="grid gap-1.5">Fallback device voice<select value={voiceUri} onChange={event => { setVoiceUri(event.target.value); voiceUriRef.current = event.target.value; try { localStorage.setItem('voxa-native-voice', event.target.value) } catch {} }} className="w-full rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic for this language</option>{voices.filter(voice => voice.lang.split('-')[0] === language).map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label><label className="grid gap-1.5">Speech input fallback<select value={inputOverride} onChange={event => changeListeningLanguage(event.target.value)} className="rounded-lg border border-brand-border bg-brand-bg p-2"><option value="">Automatic / current conversation</option><option value="en-US">English</option><option value="ur-PK">Urdu</option><option value="pa-PK">Punjabi (Pakistan)</option><option value="hi-IN">Hindi</option></select></label><p>Browser recognition uses one listening language at a time. If your first words are misheard, choose the input fallback. Replies adapt to the recognized language.</p></div></details>
           </div>
         </div>
         <aside className="space-y-5">

@@ -4,7 +4,7 @@ import { loadClinicDirectory } from '@/lib/clinic-directory';
 import { answerFromDirectory } from '@/lib/voice/directory-answer';
 import { detectCallLanguage, greetingFor, localized, type CallLanguage } from '@/lib/voice/language';
 import { takeSpeechSegments } from '@/lib/voice/protocol';
-import { answerBookingFlow } from '@/lib/voice/booking-flow';
+import { answerBookingFlow, readBookingDraft } from '@/lib/voice/booking-flow';
 import { extractIntroducedName, acknowledgeName } from '@/lib/voice/introduction';
 import type { AgentRow, KnowledgeDocRow } from '@/types/database';
 
@@ -28,7 +28,11 @@ export function buildSystemPrompt(agent: AgentRow, knowledge: KnowledgeDocRow[])
 export async function prepareVoiceReply(agent: AgentRow, knowledge: KnowledgeDocRow[], history: CallTurn[], hint: CallLanguage = 'en') {
   const latest = [...history].reverse().find(turn => turn.speaker === 'caller')?.text ?? '';
   const language = detectCallLanguage(latest, hint);
-  if (!history.length) return { language, doctorIds: [] as string[], reply: agent.greeting || greetingFor(agent.name, language), source: 'greeting', messages: [] as OllamaChatMessage[] };
+  if (!history.length) return { language, doctorIds: [] as string[], reply: agent.greeting && detectCallLanguage(agent.greeting, language) === language ? agent.greeting : greetingFor(agent.name, language), source: 'greeting', messages: [] as OllamaChatMessage[] };
+  const introductoryName = extractIntroducedName(latest);
+  const activeBooking = readBookingDraft(history).active;
+  if (introductoryName && !activeBooking) return { language, doctorIds: [] as string[], source: 'introduction', messages: [] as OllamaChatMessage[], reply: acknowledgeName(introductoryName, language) + ' ' + localized(language, 'How can I help you today?', 'آپ کو کس سلسلے میں مدد چاہیے؟', 'تہاڈے لئی کی مدد کراں؟', 'आपको किस बारे में मदद चाहिए?') };
+  if (!activeBooking && /^(?:hello|hi|hey|salaam|salam|ass?alam[ -]?o?[ -]?alaikum|السلام\s*علیکم|اسلام\s*علیکم|سلام|ہیلو|नमस्ते)[\s.!،؟۔]*$/iu.test(latest.trim())) return { language, doctorIds: [] as string[], source: 'greeting', reply: greetingFor(agent.name, language), messages: [] as OllamaChatMessage[] };
   const directory = await loadClinicDirectory(agent.user_id);
   const direct = answerFromDirectory(latest, directory.doctors, directory.clinic, language, directory.available);
   if (direct?.kind === 'availability') return { ...direct, language, source: direct.kind, messages: [] as OllamaChatMessage[] };
@@ -64,7 +68,7 @@ export async function createVoiceStream(agent: AgentRow, knowledge: KnowledgeDoc
       try {
         send({ type: 'meta', language: prepared.language, doctorIds: prepared.doctorIds, source: prepared.source, bookingDraft: 'bookingDraft' in prepared ? prepared.bookingDraft : null });
         if (prepared.reply) {
-          send({ type: 'sentence', text: prepared.reply });
+          for (const text of takeSpeechSegments(prepared.reply, true).sentences) send({ type: 'sentence', text });
           send({ type: 'done', reply: prepared.reply });
         } else {
           let raw = '', spokenLength = 0;

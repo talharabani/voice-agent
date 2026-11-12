@@ -40,3 +40,5 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 See [clinic voice and WhatsApp deployment instructions](docs/clinic-voice-setup.md), including the required database migration and approved message template.
 
 See the [doctor directory and multilingual voice upgrade](docs/clinic-directory-upgrade.md) for migration 006 and the current call workflow.
+
+For the current Urdu speaker service and the one-command laptop startup, see [Urdu audio testing](docs/urdu-audio-testing.md).
