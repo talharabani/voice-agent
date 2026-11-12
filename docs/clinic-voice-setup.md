@@ -14,6 +14,12 @@ The public `/call/[token]` page and dashboard agent call tester share an audio-o
 
 Call transcripts remain server-side for conversations, lead analysis and booking extraction. End the call using the hangup button and wait for the saved status. Closing a tab mid-call does not guarantee persistence. Ollama and the temporary tunnel must stay running for Vercel to reach the laptop. Qwen3 thinking is disabled to reduce response latency. Hosting plan execution limits still apply.
 
+### Laptop latency
+
+Live replies use `OLLAMA_VOICE_MODEL` (default `qwen3:0.6b`); post-call analysis still uses `OLLAMA_MODEL` (default `qwen3:1.7b`). Pull both models on the machine running Ollama. The smaller live model trades answer quality for speed; set `OLLAMA_VOICE_MODEL=qwen3:1.7b` to prefer the larger model.
+
+The initial greeting skips model inference. Live generation requests keep the model resident for 30 minutes and limit output to 96 tokens, without applying that limit to JSON analysis. The client sends a final recognition result immediately rather than waiting for the recognition session to end. Network, database and browser speech services still contribute to call latency; CPU inference does not guarantee instant responses.
+
 ## Booking workflow
 
 A caller's appointment request is saved after the call ends. The agent asks for a country-code phone number and explicit permission to receive a WhatsApp confirmation. The clinic reviews the call and verifies consent, selects an exact available date/time, and confirms the appointment in Appointments. The current implementation does not check a clinic calendar or auto-reserve an available slot.

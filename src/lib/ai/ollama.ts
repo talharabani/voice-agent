@@ -16,7 +16,7 @@ interface OllamaChatResponse {
  */
 export async function ollamaChat(
   messages: OllamaChatMessage[],
-  options?: { format?: "json"; model?: string }
+  options?: { format?: "json"; model?: string; maxTokens?: number; keepAlive?: string }
 ): Promise<string> {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   const model = options?.model ?? process.env.OLLAMA_MODEL ?? "qwen3:1.7b";
@@ -30,6 +30,8 @@ export async function ollamaChat(
       model,
       messages,
       stream: false,
+      ...(options?.keepAlive ? { keep_alive: options.keepAlive } : {}),
+      ...(options?.maxTokens ? { options: { num_predict: options.maxTokens } } : {}),
       ...(/^qwen3(?::|$)/i.test(model) ? { think: false } : {}),
       ...(options?.format ? { format: options.format } : {}),
     }),

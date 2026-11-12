@@ -127,6 +127,11 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     let failed = false
     rec.onresult = event => {
       text = Array.from(event.results).filter(result => result.isFinal).map(result => result[0].transcript).join(' ').trim()
+      // A final speech result is ready to send; do not wait for the browser's
+      // extra recognition-session silence timeout before contacting the agent.
+      if (text && active.current && !mute.current && recognition.current === rec) {
+        void turnRef.current(text)
+      }
     }
     rec.onerror = event => {
       if (event.error === 'no-speech' || event.error === 'aborted') return

@@ -33,7 +33,7 @@ export function buildSystemPrompt(agent: AgentRow, knowledge: KnowledgeDocRow[])
     [
       "Rules for this live phone call:",
       "- Reply in plain spoken English only.",
-      "- Keep every reply short: one to three sentences. No lists, no markdown, no emojis.",
+      "- Reply in one short sentence, usually under 25 words. Use two sentences only when repeating booking details. No lists, markdown or emojis.",
       "- Ask for one piece of information at a time.",
       "- If you don't know something, say so politely and offer to take a message.",
       "- Never invent prices, availability, or confirmed bookings. Only state what the business knowledge supports.",
@@ -55,8 +55,8 @@ export async function generateAgentReply(
   knowledge: KnowledgeDocRow[],
   history: CallTurn[]
 ): Promise<string> {
-  if (history.length === 0 && agent.greeting) {
-    return agent.greeting;
+  if (history.length === 0) {
+    return agent.greeting || `Hello, this is ${agent.name}. How can I help you today?`;
   }
 
   const { data: clinic } = await supabaseAdmin.from("clinic_profiles").select("*").eq("user_id", agent.user_id).maybeSingle();
@@ -70,13 +70,10 @@ export async function generateAgentReply(
     })),
   ];
 
-  if (history.length === 0) {
-    messages.push({
-      role: "user" as const,
-      content: "(The call just connected. Greet the caller briefly and ask how you can help.)",
-    });
-  }
-
-  const reply = stripThinking(await ollamaChat(messages));
+  const reply = stripThinking(await ollamaChat(messages, {
+    model: process.env.OLLAMA_VOICE_MODEL || "qwen3:0.6b",
+    maxTokens: 96,
+    keepAlive: "30m",
+  }));
   return reply || "I'm sorry, could you say that again?";
 }
