@@ -30,6 +30,7 @@ export async function ollamaChat(
       model,
       messages,
       stream: false,
+      ...(/^qwen3(?::|$)/i.test(model) ? { think: false } : {}),
       ...(options?.format ? { format: options.format } : {}),
     }),
     signal: AbortSignal.timeout(timeoutMs),
@@ -111,6 +112,7 @@ export async function analyzeCallTranscript(
 
 export interface AppointmentExtraction {
   requested: boolean;
+  whatsapp_consent: boolean;
   customer_name: string | null;
   customer_phone: string | null;
   service: string | null;
@@ -119,6 +121,7 @@ export interface AppointmentExtraction {
 
 const NO_APPOINTMENT: AppointmentExtraction = {
   requested: false,
+  whatsapp_consent: false,
   customer_name: null,
   customer_phone: null,
   service: null,
@@ -146,9 +149,9 @@ export async function extractAppointment(
             "You read customer call transcripts for a receptionist service. " +
             "Decide whether the CALLER asked to book, schedule, or reserve an appointment/visit/service. " +
             "Respond with ONLY this JSON, no other text: " +
-            '{"requested":true|false,"customer_name":"string or null","customer_phone":"string or null",' +
+            '{"requested":true|false,"whatsapp_consent":true|false,"customer_name":"string or null","customer_phone":"string or null",' +
             '"service":"short phrase or null","requested_time":"the time/date exactly as the caller said it, or null"}. ' +
-            "If no booking was discussed, use requested:false and nulls.",
+            "Set whatsapp_consent:true ONLY when the CALLER explicitly agreed to receive an appointment confirmation on WhatsApp. Never infer consent from a phone number. If no booking was discussed, use requested:false and nulls.",
         },
         { role: "user", content: transcriptText },
       ],
@@ -156,10 +159,11 @@ export async function extractAppointment(
     );
 
     const parsed = JSON.parse(content) as Partial<AppointmentExtraction>;
-    if (!parsed.requested) return NO_APPOINTMENT;
+    if (parsed.requested !== true) return NO_APPOINTMENT;
 
     return {
       requested: true,
+      whatsapp_consent: parsed.whatsapp_consent === true,
       customer_name: parsed.customer_name ?? null,
       customer_phone: parsed.customer_phone ?? null,
       service: parsed.service ?? null,

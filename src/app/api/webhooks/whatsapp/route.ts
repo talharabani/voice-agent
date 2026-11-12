@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 
+import { supabaseAdmin } from '@/lib/supabase/admin'
+import { z } from 'zod'
 import { safeEqual } from '@/lib/security'
 
 /**
@@ -37,10 +39,7 @@ export async function POST(request: Request) {
       return new Response('Invalid signature', { status: 401 })
     }
   } else {
-    console.warn(
-      'META_APP_SECRET is not set — WhatsApp webhook signature NOT verified. ' +
-        'Set it before going to production.'
-    )
+    return new Response('WhatsApp webhook is not configured', { status: 503 })
   }
 
   let body: unknown
@@ -48,6 +47,22 @@ export async function POST(request: Request) {
     body = JSON.parse(rawBody)
   } catch {
     return new Response('Invalid JSON', { status: 400 })
+  }
+
+  const payload = z.object({ entry: z.array(z.object({ changes: z.array(z.object({ value: z.object({ statuses: z.array(z.object({ id: z.string(), status: z.string() })).optional() }) })) })) }).safeParse(body)
+  if (payload.success) {
+    for (const entry of payload.data.entry) for (const change of entry.changes) for (const event of change.value.statuses ?? []) {
+      const predecessors: Record<string, string[]> = {
+        sent: ['sending', 'accepted'], delivered: ['sending', 'accepted', 'sent'],
+        read: ['sending', 'accepted', 'sent', 'delivered'], failed: ['sending', 'accepted', 'sent'],
+      }
+      if (!predecessors[event.status]) continue
+      const { error } = await supabaseAdmin.from('appointments').update({
+        whatsapp_status: event.status,
+        whatsapp_error: event.status === 'failed' ? 'WhatsApp could not deliver the confirmation. Check the recipient and Meta account.' : null,
+      }).eq('whatsapp_message_id', event.id).in('whatsapp_status', predecessors[event.status])
+      if (error) return new Response('Could not record delivery update', { status: 503 })
+    }
   }
 
   const webhookBase = process.env.N8N_WEBHOOK_BASE

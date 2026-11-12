@@ -1,3 +1,5 @@
+export const maxDuration = 180;
+
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -56,16 +58,17 @@ export async function POST(
   }
 
   try {
-    await saveCallRecord({
+    const result = await saveCallRecord({
       agentId: agent.id,
       userId: agent.user_id,
       transcript: input.transcript,
       durationSeconds: input.duration_seconds ?? null,
       status: "web",
     });
+    return NextResponse.json({ ok: true, warnings: result.warnings });
   } catch (err) {
     console.error("Failed to save public web call", err);
+    return NextResponse.json({ error: "Could not save the call. Please contact the clinic." }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true });
 }

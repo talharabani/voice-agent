@@ -1,4 +1,5 @@
 import { SignUp } from "@clerk/nextjs";
+import { clerkAppearance } from "@/lib/clerk-appearance";
 import { Waveform } from "@/components/voice/waveform";
 
 export default function SignUpPage() {
@@ -11,20 +12,8 @@ export default function SignUpPage() {
         </span>
       </div>
       <SignUp
-        fallbackRedirectUrl="/dashboard"
-        appearance={{
-          variables: {
-            colorPrimary: "#7c5cfc",
-            colorBackground: "#12161f",
-            colorForeground: "#e7e9ee",
-            colorInput: "#181d29",
-            colorInputForeground: "#e7e9ee",
-            borderRadius: "0.625rem",
-          },
-          elements: {
-            card: "shadow-xl border border-brand-border",
-          },
-        }}
+        forceRedirectUrl="/settings"
+        appearance={clerkAppearance}
       />
     </div>
   );

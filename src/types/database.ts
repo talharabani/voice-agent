@@ -74,6 +74,21 @@ export type AppointmentRow = {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  whatsapp_consent: boolean;
+  whatsapp_status: string;
+  whatsapp_message_id: string | null;
+  whatsapp_error: string | null;
+  whatsapp_sent_at: string | null;
+};
+
+export type ClinicProfileRow = {
+  user_id: string;
+  clinic_name: string;
+  address: string;
+  phone: string;
+  opening_hours: string;
+  timezone: string;
+  updated_at: string;
 };
 
 export type PhoneNumberRow = {
@@ -98,6 +113,12 @@ export type KnowledgeDocRow = {
 export interface Database {
   public: {
     Tables: {
+      clinic_profiles: {
+        Row: ClinicProfileRow;
+        Insert: Omit<ClinicProfileRow, 'updated_at'> & { updated_at?: string };
+        Update: Partial<ClinicProfileRow>;
+        Relationships: [];
+      };
       users: {
         Row: UserRow;
         Insert: Partial<UserRow> & { clerk_id: string; email: string };

@@ -138,3 +138,14 @@
   animation: waveform 1.1s ease-in-out infinite;
   transform-origin: center;
 }
+
+/* Audio call: cream canvas, sage orb and ink controls. */
+.voice-orbit { position: relative; display: grid; place-items: center; width: 256px; height: 256px; border: 1px solid var(--brand-border); border-radius: 50%; }
+.voice-orbit::before { content: ''; position: absolute; inset: 14px; border: 1px solid #7e9b7638; border-radius: 50%; }
+.voice-orb { display: grid; place-items: center; width: 196px; height: 196px; border-radius: 50%; background: radial-gradient(circle at 32% 25%, #c4d3b8, #9db28c 45%, #7e9b76 80%); box-shadow: inset 0 0 32px #ffffff40, 0 20px 65px #7e9b7630; transition: transform .6s ease; }
+.voice-speaking .voice-orb { animation: voice-breathe 2.4s ease-in-out infinite; }
+.voice-speaking .voice-bar { animation: voice-wave .75s ease-in-out infinite alternate; }
+.voice-listening .voice-orb { animation: voice-breathe 3s ease-in-out infinite; }
+@keyframes voice-breathe { 50% { transform: scale(1.07); } }
+@keyframes voice-wave { to { transform: scaleY(.35); } }
+@media (prefers-reduced-motion: reduce) { .voice-orb, .voice-bar { animation: none !important; } }

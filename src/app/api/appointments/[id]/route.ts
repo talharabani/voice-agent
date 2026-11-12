@@ -3,18 +3,22 @@ import { z } from "zod";
 
 import { ApiError, apiErrorResponse, requireApiUser } from "@/lib/api-helpers";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { sendAppointmentConfirmation } from "@/lib/whatsapp";
 
 const updateAppointmentSchema = z.object({
   status: z.enum(["requested", "confirmed", "completed", "cancelled"]).optional(),
   scheduled_at: z.string().datetime({ offset: true }).nullable().optional(),
   notes: z.string().trim().max(5000).nullable().optional(),
   service: z.string().trim().max(200).nullable().optional(),
+  customer_phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/).optional(),
+  whatsapp_consent: z.boolean().optional(),
+  notify: z.boolean().optional(),
 });
 
 async function assertOwned(userId: string, id: string) {
   const { data, error } = await supabaseAdmin
     .from("appointments")
-    .select("id")
+    .select("*")
     .eq("id", id)
     .eq("user_id", userId)
     .single();
@@ -22,6 +26,7 @@ async function assertOwned(userId: string, id: string) {
   if (error || !data) {
     throw new ApiError("Appointment not found", 404);
   }
+  return data;
 }
 
 export async function PATCH(
@@ -31,7 +36,7 @@ export async function PATCH(
   try {
     const user = await requireApiUser();
     const { id } = await params;
-    await assertOwned(user.id, id);
+    const existing = await assertOwned(user.id, id);
 
     let input;
     try {
@@ -41,16 +46,38 @@ export async function PATCH(
       return NextResponse.json({ error: message }, { status: 422 });
     }
 
+    const { notify, ...changes } = input;
+    const finalStatus = changes.status ?? existing.status;
+    if (finalStatus === 'confirmed' && !(changes.scheduled_at ?? existing.scheduled_at)) {
+      throw new ApiError('Choose an exact appointment date and time before confirming.', 422);
+    }
+    if (changes.status === 'confirmed' && new Date(changes.scheduled_at ?? existing.scheduled_at!).getTime() <= Date.now()) {
+      throw new ApiError('Choose a future appointment date and time.', 422);
+    }
+    if (['sending', 'accepted', 'sent', 'delivered', 'read', 'unknown'].includes(existing.whatsapp_status) &&
+      (changes.scheduled_at !== undefined || changes.customer_phone !== undefined || changes.service !== undefined)) {
+      throw new ApiError('This confirmation has already been submitted. Contact the patient before changing its details.', 409);
+    }
     const { data, error } = await supabaseAdmin
       .from("appointments")
-      .update({ ...input, updated_at: new Date().toISOString() })
+      .update({ ...changes, updated_at: new Date().toISOString() })
       .eq("id", id)
+      .eq("user_id", user.id)
       .select("*, agents(name)")
       .single();
 
     if (error) throw error;
 
-    return NextResponse.json({ appointment: data });
+    let notificationError: string | null = null;
+    if (finalStatus === 'confirmed' && (changes.status === 'confirmed' || notify)) {
+      try { await sendAppointmentConfirmation(id, user.id); }
+      catch (err) {
+        console.error('Appointment notification failed', err);
+        notificationError = 'Appointment saved, but the WhatsApp result could not be recorded. Check its status before retrying.';
+      }
+    }
+    const { data: refreshed } = await supabaseAdmin.from('appointments').select('*, agents(name)').eq('id', id).eq('user_id', user.id).single();
+    return NextResponse.json({ appointment: refreshed ?? data, notificationError });
   } catch (err) {
     return apiErrorResponse(err);
   }

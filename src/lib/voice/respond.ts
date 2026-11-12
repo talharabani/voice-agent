@@ -1,5 +1,6 @@
 import "server-only";
 
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { ollamaChat } from "@/lib/ai/ollama";
 import type { AgentRow, KnowledgeDocRow } from "@/types/database";
 
@@ -36,7 +37,7 @@ export function buildSystemPrompt(agent: AgentRow, knowledge: KnowledgeDocRow[])
       "- Ask for one piece of information at a time.",
       "- If you don't know something, say so politely and offer to take a message.",
       "- Never invent prices, availability, or confirmed bookings. Only state what the business knowledge supports.",
-      "- If the caller wants an appointment: collect their name, phone number, the service they need, and their preferred day and time — one question at a time. Then repeat the details back and say the business will confirm the exact slot shortly. Do not claim the slot is already confirmed.",
+      "- If the caller wants an appointment: collect their name, phone number, the service they need, and their preferred day and time — one question at a time. Ask for the phone number with its country code and explicitly ask whether they agree to receive an appointment confirmation on WhatsApp. Record their answer accurately. Then repeat the details back and say the business will confirm the exact slot shortly. Do not claim the slot is already confirmed.",
       "- Do not output <think> tags or any reasoning — output only what you would say out loud.",
     ].join("\n")
   );
@@ -58,8 +59,11 @@ export async function generateAgentReply(
     return agent.greeting;
   }
 
+  const { data: clinic } = await supabaseAdmin.from("clinic_profiles").select("*").eq("user_id", agent.user_id).maybeSingle();
+  const clinicContext = clinic ? `\nVerified clinic information:\nName: ${clinic.clinic_name}\nAddress: ${clinic.address}\nContact: ${clinic.phone}\nHours: ${clinic.opening_hours}\nTimezone: ${clinic.timezone}` : "\nClinic details have not been provided. Do not invent them.";
+
   const messages = [
-    { role: "system" as const, content: buildSystemPrompt(agent, knowledge) },
+    { role: "system" as const, content: buildSystemPrompt(agent, knowledge) + clinicContext },
     ...history.map((turn) => ({
       role: turn.speaker === "caller" ? ("user" as const) : ("assistant" as const),
       content: turn.text,

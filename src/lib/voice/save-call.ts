@@ -20,7 +20,8 @@ interface SaveCallInput {
  * Shared by the browser call tester and the telephony webhooks.
  */
 export async function saveCallRecord(input: SaveCallInput) {
-  const analysis = await analyzeCallTranscript(input.transcript);
+  const [analysis, booking] = await Promise.all([analyzeCallTranscript(input.transcript), extractAppointment(input.transcript)]);
+  const warnings: string[] = [];
 
   const { data: conversation, error: conversationError } = await supabaseAdmin
     .from("conversations")
@@ -61,12 +62,11 @@ export async function saveCallRecord(input: SaveCallInput) {
       .select()
       .single();
 
-    if (leadError) console.error("Failed to store lead", leadError);
+    if (leadError) { console.error("Failed to store lead", leadError); warnings.push("Call saved, but the lead could not be recorded."); }
     else lead = leadRow;
   }
 
   let appointment = null;
-  const booking = await extractAppointment(input.transcript);
   if (booking.requested) {
     const { data: apptRow, error: apptError } = await supabaseAdmin
       .from("appointments")
@@ -81,13 +81,14 @@ export async function saveCallRecord(input: SaveCallInput) {
         service: booking.service,
         requested_time: booking.requested_time,
         status: "requested",
+        whatsapp_consent: booking.whatsapp_consent,
       })
       .select()
       .single();
 
-    if (apptError) console.error("Failed to store appointment", apptError);
+    if (apptError) { console.error("Failed to store appointment", apptError); warnings.push("Call saved, but the appointment request could not be recorded. Please contact the clinic."); }
     else appointment = apptRow;
   }
 
-  return { conversation, lead, appointment, analysis };
+  return { conversation, lead, appointment, analysis, warnings };
 }
