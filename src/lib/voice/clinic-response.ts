@@ -6,6 +6,7 @@ import { detectCallLanguage, greetingFor, localized, type CallLanguage } from '@
 import { takeSpeechSegments } from '@/lib/voice/protocol';
 import { answerBookingFlow, readBookingDraft } from '@/lib/voice/booking-flow';
 import { extractIntroducedName, acknowledgeName } from '@/lib/voice/introduction';
+import { isCallerEcho, receptionistFallback } from '@/lib/voice/reply-guard';
 import type { AgentRow, KnowledgeDocRow } from '@/types/database';
 
 export type CallTurn = { speaker: 'agent' | 'caller'; text: string };
@@ -18,6 +19,7 @@ export function buildSystemPrompt(agent: AgentRow, knowledge: KnowledgeDocRow[])
     agent.system_prompt || '', agent.description || '',
     'Reply in the SAME language as the caller: English, Urdu, Punjabi or Hindi. Do not translate proper names or clinic facts. For Urdu use Urdu script, for Punjabi match the caller script. Never force English.',
     'Speak briefly: one short sentence and one question at a time. No markdown or thinking text.',
+    'Always answer AS the receptionist addressing the caller. Never repeat the caller message as your own request. Never speak as the patient. Respond to their intent and ask the next useful question.',
     'Use ONLY verified clinic and doctor facts below. Never invent a doctor, qualification, experience, fee, available slot or diagnosis. If information is absent, say reception needs to confirm.',
     'For a booking collect patient name, WhatsApp number with country code, concern in their own words, preferred doctor/service, and preferred date/time. Ask each missing item one at a time. Then explicitly ask permission for WhatsApp confirmation. Do not infer consent. Repeat details and explain the clinic will confirm the slot; do not claim a booking or message is already confirmed.',
     'If asked for a diagnosis, treatment, or a guarantee of doctor suitability, explain a clinician must assess it. Urgent symptoms should be directed to local emergency care, not routine booking.',
@@ -54,7 +56,7 @@ export async function generateAgentReply(agent: AgentRow, knowledge: KnowledgeDo
   const prepared = await prepareVoiceReply(agent, knowledge, history);
   if (prepared.reply) return prepared.reply;
   const reply = stripThinking(await ollamaChat(prepared.messages, { model: process.env.OLLAMA_VOICE_MODEL || 'qwen3:0.6b', maxTokens: 128, keepAlive: '30m' }));
-  return reply || 'Please repeat that for reception.';
+  return !reply || isCallerEcho(reply, history.at(-1)?.text ?? '') ? receptionistFallback(prepared.language) : reply;
 }
 
 export async function createVoiceStream(agent: AgentRow, knowledge: KnowledgeDocRow[], history: CallTurn[], hint: CallLanguage, signal: AbortSignal) {
@@ -72,19 +74,42 @@ export async function createVoiceStream(agent: AgentRow, knowledge: KnowledgeDoc
           send({ type: 'done', reply: prepared.reply });
         } else {
           let raw = '', spokenLength = 0;
-          for await (const chunk of ollamaChatStream(prepared.messages, combined)) {
+          const modelStop = new AbortController();
+          const modelSignal = AbortSignal.any([combined, modelStop.signal]);
+          const iterator = ollamaChatStream(prepared.messages, modelSignal)[Symbol.asyncIterator]();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          let emitted = false;
+          const spoken: string[] = [];
+          const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Voice reply deadline')), 6000); });
+          const caller = [...history].reverse().find(turn => turn.speaker === 'caller')?.text ?? '';
+          const emit = (text: string) => {
+            if (isCallerEcho(text, caller)) throw new Error('Caller echo rejected');
+            send({ type: 'sentence', text }); emitted = true; spoken.push(text);
+          };
+          try {
+          while (true) {
+            const next = await Promise.race([iterator.next(), deadline]);
+            if (next.done) break;
+            const chunk = next.value;
             raw += chunk;
             const clean = raw.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trimStart();
             const pending = clean.slice(spokenLength);
             if (/<(?:think)?[^>]*$/.test(pending)) continue;
             const segmented = takeSpeechSegments(pending);
-            for (const text of segmented.sentences) send({ type: 'sentence', text });
+            for (const text of segmented.sentences) emit(text);
             spokenLength = clean.length - segmented.rest.length;
           }
           const reply = stripThinking(raw);
           if (!reply) throw new Error('The model returned an empty answer');
-          for (const text of takeSpeechSegments(reply.slice(spokenLength), true).sentences) send({ type: 'sentence', text });
+          for (const text of takeSpeechSegments(reply.slice(spokenLength), true).sentences) emit(text);
           send({ type: 'done', reply });
+          } catch (error) {
+            if (combined.aborted) throw error;
+            // Finish once, cancelling inference so a late response cannot play afterwards.
+            const reply = emitted ? spoken.join(' ') : receptionistFallback(prepared.language);
+            if (!emitted) send({ type: 'sentence', text: reply });
+            send({ type: 'done', reply });
+          } finally { if (timer) clearTimeout(timer); modelStop.abort(); }
         }
       } catch (error) {
         if (!combined.aborted) {

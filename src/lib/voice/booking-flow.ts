@@ -30,8 +30,13 @@ export function normalizeSpokenPhone(value: string) {
   return /^\+[1-9]\d{7,14}$/.test(phone) ? phone : null;
 }
 export function bookingIntent(text: string) {
+  if (checkupIntent(text)) return true;
   if (/\b(cancel|don't|do not|not booking)\b|منسوخ|کینسل|نہیں چاہیے|نہیں چاہ|नहीं चाहिए|रद्द/i.test(text)) return false;
   return /\b(book|schedule|reserve)\b.{0,35}\b(appointment|visit|consultation)\b|\b(?:want|need|like|request)\b.{0,40}\bappointment\b|\bappointment\b.{0,30}\b(?:book|karni|krni|chahiye|chaiye|lena|leni)\b|\b(?:meri|mujhe|mujhy|mjy)\b.{0,40}\bappointment\b|\bbook\b.{0,20}\b(?:with dr|doctor)\b|\b(?:want|like|need|can i)\b.{0,25}\bsee\b.{0,15}\bdr\b|^appointment(?: please)?[.!]?\s*$|ڈاکٹر.{0,80}(?:ملنا|وقت لینا)|اپائنٹمنٹ|اپائنمنٹ|اپائمنٹ|بکنگ|وقت لینا|اپوائنٹمنٹ|अपॉइंटमेंट|अपॉइन्टमेंट/i.test(text);
+}
+export function checkupIntent(text: string) {
+  if (/\b(?:not|don't|cancel)\b|نہیں|منسوخ|नहीं/i.test(text)) return false;
+  return /\b(?:want|need|book|schedule)\b.{0,40}\b(?:check[ -]?up|consultation)\b|\bcheck[ -]?up\b.{0,30}\b(?:karwana|krwana|karana|chahiye|chaiye|please)\b|(?:چیک\s*اپ|چیکاپ|معائنہ).{0,30}(?:کروانا|کرانا|چاہیے|کروا)|(?:चेक\s*अप|चेकअप|जांच|जाँच).{0,30}(?:करवाना|कराना|चाहिए)/iu.test(text);
 }
 export function readBookingDraft(history: Turn[], doctors: PublicDoctor[] = []) {
   const draft = { active: false, cancelled: false, name: null as string | null, phone: null as string | null, concern: null as string | null, doctor: null as string | null, doctorAnswered: false, time: null as string | null, consent: null as boolean | null };
@@ -39,6 +44,7 @@ export function readBookingDraft(history: Turn[], doctors: PublicDoctor[] = []) 
     const turn = history[index]; if (turn.speaker !== 'caller') continue;
     if (cancellation(turn.text)) { Object.assign(draft, { active: false, cancelled: true, name: null, phone: null, concern: null, doctor: null, doctorAnswered: false, time: null, consent: null }); continue; }
     if (bookingIntent(turn.text)) { draft.active = true; draft.cancelled = false; }
+    if (checkupIntent(turn.text) && !draft.concern) draft.concern = turn.text.slice(0, 2000);
     const introduction = extractIntroducedName(turn.text);
     if (introduction) draft.name = introduction;
     if (!draft.active) continue;
@@ -53,7 +59,7 @@ export function readBookingDraft(history: Turn[], doctors: PublicDoctor[] = []) 
     if (/\b(change|correct|update)\b|تبدیل|درست|बदल|सही/i.test(text)) continue;
     // Do not mistake a question or an emergency for a patient field.
     if (/[?؟]$/.test(text) || /^(?:what|how|who|where|tell me)\b/i.test(text)) continue;
-    if (field === 'name' && text.length <= 120) draft.name = text;
+    if (field === 'name' && text.length <= 120 && !bookingIntent(text)) draft.name = text;
     if (field === 'phone') {
       const phone = normalizeSpokenPhone(text);
       if (draft.phone && draft.phone !== phone) draft.consent = null;
