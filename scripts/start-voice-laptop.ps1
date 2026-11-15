@@ -3,6 +3,22 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $runtimeRoot = Join-Path $projectRoot '.claude'
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+function Test-VoiceAudio([string]$BaseUrl, [string]$Label) {
+  $probeBody = @{ text = 'Hello'; language = 'ur'; style = 'warm-female' } | ConvertTo-Json
+  $failure = 'No audio response'
+  for ($probeAttempt = 0; $probeAttempt -lt 2; $probeAttempt++) {
+    try {
+      $probe = Invoke-WebRequest -Uri ($BaseUrl.TrimEnd('/') + '/voxa/tts') -Method Post -ContentType 'application/json' -Headers @{'ngrok-skip-browser-warning'='true'} -Body $probeBody -UseBasicParsing -TimeoutSec 25
+      if ($probe.StatusCode -eq 200 -and $probe.Headers['Content-Type'] -match '^audio/' -and $probe.RawContentLength -gt 1000) {
+        Write-Output "$Label Urdu audio: OK"
+        return
+      }
+      $failure = "HTTP $($probe.StatusCode), content type $($probe.Headers['Content-Type'])"
+    } catch { $failure = $_.Exception.Message }
+    if ($probeAttempt -eq 0) { Start-Sleep -Milliseconds 700 }
+  }
+  throw "$Label audio test failed: $failure. The helper process may be running while the speech service or internet connection is unavailable."
+}
 $voicePython = Join-Path $runtimeRoot 'tts-venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $voicePython)) {
   & python -m venv (Join-Path $runtimeRoot 'tts-venv')
@@ -30,6 +46,7 @@ if (-not $bridgeReady) {
   }
   if (-not $bridgeReady) { throw 'Voice helper did not start. Check .claude/voice-bridge-error.log.' }
 }
+Test-VoiceAudio 'http://127.0.0.1:11435' 'Local'
 Write-Output 'Urdu voice helper is running on this laptop.'
 if ($NoTunnel) { return }
 
@@ -65,12 +82,14 @@ for ($attempt = 0; $attempt -lt 30; $attempt++) {
     $current = @((Invoke-RestMethod 'http://127.0.0.1:4040/api/tunnels' -TimeoutSec 1).tunnels)
     if ($current.Count -and $current[0].public_url) {
       $voiceUrl = $current[0].public_url
-      if ($oldUrl -and $voiceUrl -ne $oldUrl) { throw 'The public URL changed. Update OLLAMA_BASE_URL in Vercel.' }
-      Set-Content -LiteralPath (Join-Path $runtimeRoot 'voice-public-url.txt') -Value $voiceUrl
-      Write-Output "Vercel OLLAMA_BASE_URL: $voiceUrl"
-      return
+      break
     }
   } catch {}
   Start-Sleep -Milliseconds 400
 }
-throw 'Tunnel did not become ready. Check .claude/voice-tunnel-error.log.'
+if (-not $voiceUrl) { throw 'Tunnel did not become ready. Check .claude/voice-tunnel-error.log.' }
+if ($oldUrl -and $voiceUrl -ne $oldUrl) { throw 'The public URL changed. Update OLLAMA_BASE_URL in Vercel.' }
+Test-VoiceAudio $voiceUrl 'Public tunnel'
+Set-Content -LiteralPath (Join-Path $runtimeRoot 'voice-public-url.txt') -Value $voiceUrl
+Write-Output "Vercel OLLAMA_BASE_URL: $voiceUrl"
+Write-Output 'Voice testing is ready. Refresh the live website and try Preview.'
