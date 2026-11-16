@@ -5,6 +5,7 @@ text; the workspace owner explicitly approved that transfer. The edge-tts
 client is an unofficial no-key testing integration, not a production SLA.
 """
 import asyncio
+import logging
 from contextlib import aclosing
 import aiohttp
 from aiohttp import web
@@ -22,6 +23,7 @@ STYLES = {
     "youthful": (False, "+3%", "+8Hz"), "gentle": (False, "-6%", "+0Hz"),
 }
 SLOTS = asyncio.Semaphore(3)
+LOG = logging.getLogger("voxa.voice")
 
 async def health(_request):
     return web.json_response({"service": "voxa-local-voice", "speech": True})
@@ -41,26 +43,36 @@ async def speak(request):
     response = None
     try:
         async with asyncio.timeout(20), SLOTS:
-            speech = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, connect_timeout=6, receive_timeout=12)
-            async with aclosing(speech.stream()) as chunks:
-                first = None
-                async for part in chunks:
-                    if part["type"] == "audio":
-                        first = part["data"]
-                        break
-                if not first:
-                    return web.json_response({"error": "No speech audio received"}, status=502)
-                response = web.StreamResponse(headers={"Content-Type": "audio/mpeg", "Cache-Control": "no-store", "X-Voice-Name": voice})
-                await response.prepare(request)
-                await response.write(first)
-                async for part in chunks:
-                    if part["type"] == "audio":
-                        await response.write(part["data"])
-                await response.write_eof()
-                return response
+            # Microsoft's free testing endpoint can drop an occasional connection.
+            # Retry only before any audio is sent, so callers never hear duplicates.
+            for attempt in range(2):
+                try:
+                    speech = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, connect_timeout=6, receive_timeout=12)
+                    async with aclosing(speech.stream()) as chunks:
+                        first = None
+                        async for part in chunks:
+                            if part["type"] == "audio":
+                                first = part["data"]
+                                break
+                        if not first:
+                            raise RuntimeError("No speech audio received")
+                        response = web.StreamResponse(headers={"Content-Type": "audio/mpeg", "Cache-Control": "no-store", "X-Voice-Name": voice})
+                        await response.prepare(request)
+                        await response.write(first)
+                        async for part in chunks:
+                            if part["type"] == "audio":
+                                await response.write(part["data"])
+                        await response.write_eof()
+                        return response
+                except Exception as error:
+                    if attempt:
+                        raise
+                    LOG.warning("Voice attempt failed; retrying once: %s", error)
+                    await asyncio.sleep(0.35)
     except (ConnectionResetError, asyncio.CancelledError):
         raise
-    except Exception:
+    except Exception as error:
+        LOG.warning("Voice request failed: %s", error)
         if response is not None and response.prepared:
             response.force_close()
             return response
