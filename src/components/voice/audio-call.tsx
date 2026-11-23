@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethoscope, ShieldCheck, AudioLines } from 'lucide-react'
+import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethoscope, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Waveform } from '@/components/voice/waveform'
+import { VoxaOrb3D } from '@/components/three/voxa-orb-3d'
 import { primeSpeaker, playOnlineSpeech, prepareSpeechAudio } from '@/lib/voice/online-playback'
 import { playBrowserSpeech } from '@/lib/voice/browser-playback'
 import { DoctorCard } from '@/components/voice/doctor-card'
@@ -397,7 +398,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
           <div className="clinic-voice-room relative flex min-h-[590px] flex-col items-center justify-between overflow-hidden rounded-[2rem] border border-brand-border bg-brand-surface p-6 text-center sm:p-8">
             <div className="relative z-10 flex w-full items-center justify-between"><span className="flex items-center gap-2 font-data text-[10px] uppercase tracking-[.18em]"><Waveform />VOXA / Care line</span><span className="flex items-center gap-1.5 text-xs text-brand-muted"><ShieldCheck className="size-3.5" />Clinic receptionist</span></div>
             <div className="relative z-10 flex flex-col items-center py-6"><p className="font-data text-[10px] uppercase tracking-[.24em] text-brand-muted">A familiar voice. A little more care.</p><h1 className="mt-3 font-display text-3xl tracking-tight sm:text-4xl">{name || 'Connecting...'}</h1>
-              <div ref={orbRef} data-phase={previewAudible ? 'speaking' : muted && phase === 'listening' ? 'muted' : phase} className={`voice-orbit clinic-orbit voice-light-scene my-8 ${phase === 'speaking' || previewAudible ? 'voice-speaking' : phase === 'listening' && !muted ? 'voice-listening' : ''}`} aria-hidden="true"><span className="voice-aura" /><span className="voice-light-rays" /><span className="voice-light-rays voice-light-rays-second" /><span className="voice-light-halo" /><span className="clinic-orbit-ring" /><div className="voice-orb"><span className="voice-orb-flow" /><AudioLines className={`relative z-10 size-16 stroke-[1] text-brand-text/65 ${phase === 'thinking' ? 'animate-pulse' : ''}`} /></div><span className="clinic-orbit-dot" /><span className="voice-spark voice-spark-one" /><span className="voice-spark voice-spark-two" /><span className="voice-spark voice-spark-three" /></div>
+              <div ref={orbRef} data-phase={previewAudible ? 'speaking' : muted && phase === 'listening' ? 'muted' : phase} className={`voice-orbit clinic-orbit voice-light-scene my-8 ${phase === 'speaking' || previewAudible ? 'voice-speaking' : phase === 'listening' && !muted ? 'voice-listening' : ''}`} aria-hidden="true"><span className="voice-aura" /><span className="voice-light-rays" /><span className="voice-light-rays voice-light-rays-second" /><span className="voice-light-halo" /><span className="clinic-orbit-ring" /><VoxaOrb3D phase={phase} muted={muted} previewAudible={previewAudible} /><span className="clinic-orbit-dot" /><span className="voice-spark voice-spark-one" /><span className="voice-spark voice-spark-two" /><span className="voice-spark voice-spark-three" /></div>
               <p role="status" aria-live="polite" className="text-base">{previewAudible ? 'Voice preview playing' : label}</p><p className="mt-2 font-data text-xs tabular-nums text-brand-muted">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</p>
               {phase === 'speaking' && <button onClick={interrupt} className="mt-3 rounded-full border border-brand-border px-4 py-2 text-xs text-brand-muted hover:bg-brand-bg">Tap to speak</button>}
             </div>

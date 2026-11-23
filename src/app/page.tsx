@@ -11,6 +11,9 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Waveform } from "@/components/voice/waveform";
+import { VoxaHeroScene } from "@/components/three/voxa-hero-scene";
+import { VoxaStatementScene } from "@/components/three/voxa-statement-scene";
+import { TiltCard3D } from "@/components/three/tilt-card-3d";
 
 const SAGE = "#A6BDA0";
 
@@ -78,12 +81,14 @@ export default function LandingPage() {
       </header>
 
       <main className="flex-1">
-        {/* hero — sage block like the poster */}
+        {/* hero — sage block with interactive 3D acoustic core */}
         <section
           className="relative overflow-hidden px-5 pb-16 pt-14 md:px-8 md:pb-24 md:pt-20"
           style={{ backgroundColor: SAGE }}
         >
-          <div className="flex items-start justify-between">
+          <VoxaHeroScene />
+
+          <div className="pointer-events-none relative z-10 flex items-start justify-between">
             <p className="max-w-[18rem] font-data text-[11px] uppercase leading-5 tracking-[0.2em] text-black">
               Voice //
               <br /> that works while
@@ -91,20 +96,22 @@ export default function LandingPage() {
             </p>
             <p className="text-right font-data text-[11px] uppercase leading-5 tracking-[0.2em] text-black">
               2026 // always on
+              <br />
+              <span className="opacity-70">3D // drag to rotate · click to pulse</span>
             </p>
           </div>
 
-          <h1 className="pointer-events-none select-none text-center font-display text-[26vw] font-bold leading-[0.85] tracking-[-0.02em] text-[#F2EDE0] md:text-[19rem]">
+          <h1 className="pointer-events-none relative z-10 select-none text-center font-display text-[26vw] font-bold leading-[0.85] tracking-[-0.02em] text-[#F2EDE0]/90 drop-shadow-[0_12px_36px_rgba(20,20,20,0.18)] md:text-[19rem]">
             VOXA
           </h1>
 
-          <div className="mt-4 flex flex-col items-start justify-between gap-8 md:flex-row md:items-end">
+          <div className="pointer-events-none relative z-10 mt-4 flex flex-col items-start justify-between gap-8 md:flex-row md:items-end">
             <div>
               <h2 className="mb-6 font-display text-4xl font-bold uppercase leading-[0.95] tracking-tight text-black md:text-5xl">
                 Every call.
                 <br /> Answered.
               </h2>
-              <div className="flex items-center gap-3">
+              <div className="pointer-events-auto flex items-center gap-3">
                 <Button asChild size="lg" className="rounded-none bg-black px-8 font-data text-[11px] uppercase tracking-[0.16em] text-[#F2EDE0] hover:bg-black/85">
                   <Link href="/sign-up">
                     Start free <ArrowRight className="size-4" />
@@ -114,7 +121,7 @@ export default function LandingPage() {
                   asChild
                   size="lg"
                   variant="outline"
-                  className="rounded-none border-black bg-transparent px-8 font-data text-[11px] uppercase tracking-[0.16em] text-black hover:bg-black hover:text-[#F2EDE0]"
+                  className="rounded-none border-black bg-[#F2EDE0]/20 px-8 font-data text-[11px] uppercase tracking-[0.16em] text-black backdrop-blur-xs hover:bg-black hover:text-[#F2EDE0]"
                 >
                   <Link href="/sign-in">Hear it answer</Link>
                 </Button>
@@ -127,22 +134,25 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* feature band — cream, numbered like a series */}
+        {/* feature band — cream, numbered like a series with 3D tilt depth */}
         <section id="product" className="border-b border-brand-border px-5 py-16 md:px-8 md:py-20">
-          <div className="mx-auto grid max-w-5xl gap-12 md:grid-cols-3">
+          <div className="mx-auto grid max-w-5xl gap-8 md:grid-cols-3">
             {FEATURES.map((feature, i) => {
               const Icon = feature.icon;
               return (
-                <div key={feature.title} className="flex flex-col items-start gap-4">
-                  <div className="flex w-full items-center justify-between">
-                    <div className="flex size-12 items-center justify-center" style={{ backgroundColor: SAGE }}>
+                <TiltCard3D
+                  key={feature.title}
+                  className="flex flex-col items-start gap-4 border border-brand-border bg-brand-surface p-7 shadow-sm"
+                >
+                  <div className="flex w-full items-center justify-between [transform:translateZ(24px)]">
+                    <div className="flex size-12 items-center justify-center shadow-sm" style={{ backgroundColor: SAGE }}>
                       <Icon className="size-5 text-black" />
                     </div>
                     <span className="font-display text-5xl font-bold text-brand-border">
                       0{i + 1}
                     </span>
                   </div>
-                  <h3 className="font-data text-xs font-semibold uppercase tracking-[0.16em] text-brand-text">
+                  <h3 className="font-data text-xs font-semibold uppercase tracking-[0.16em] text-brand-text [transform:translateZ(16px)]">
                     {feature.title}
                   </h3>
                   <p className="text-sm leading-6 text-brand-muted">
@@ -154,15 +164,16 @@ export default function LandingPage() {
                   >
                     Try it <ArrowRight className="inline size-3" />
                   </Link>
-                </div>
+                </TiltCard3D>
               );
             })}
           </div>
         </section>
 
-        {/* big statement — sage band */}
-        <section id="why" className="px-5 py-20 md:px-8 md:py-28" style={{ backgroundColor: SAGE }}>
-          <div className="mx-auto max-w-5xl">
+        {/* big statement — sage band with 3D acoustic wave field */}
+        <section id="why" className="relative overflow-hidden px-5 py-20 md:px-8 md:py-28" style={{ backgroundColor: SAGE }}>
+          <VoxaStatementScene />
+          <div className="relative z-10 mx-auto max-w-5xl">
             <p className="mb-6 font-data text-[11px] uppercase tracking-[0.2em] text-black/70">
               Every missed call // a lost customer
             </p>
@@ -185,11 +196,15 @@ export default function LandingPage() {
 
         {/* trust strip */}
         <section className="px-5 py-12 md:px-8">
-          <div className="mx-auto grid max-w-5xl grid-cols-2 gap-10 md:grid-cols-4">
+          <div className="mx-auto grid max-w-5xl grid-cols-2 gap-6 md:grid-cols-4">
             {TRUST.map((item) => {
               const Icon = item.icon;
               return (
-                <div key={item.title} className="flex items-start gap-3">
+                <TiltCard3D
+                  key={item.title}
+                  intensity={7}
+                  className="flex items-start gap-3 border border-brand-border/80 bg-brand-surface/80 p-4"
+                >
                   <Icon className="mt-0.5 size-5 shrink-0 text-brand-text" />
                   <div>
                     <p className="font-data text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-text">
@@ -197,7 +212,7 @@ export default function LandingPage() {
                     </p>
                     <p className="mt-1 text-xs text-brand-muted">{item.description}</p>
                   </div>
-                </div>
+                </TiltCard3D>
               );
             })}
           </div>
