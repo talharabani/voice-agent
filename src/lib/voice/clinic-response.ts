@@ -186,6 +186,7 @@ export async function createVoiceStream(agent: AgentRow, knowledge: KnowledgeDoc
           send({ type: 'done', reply });
           } catch (error) {
             if (combined.aborted) throw error;
+            console.error('Voice stream model fallback:', error instanceof Error ? error.message : 'Unknown error');
             // Finish once, cancelling inference so a late response cannot play afterwards.
             const reply = emitted ? spoken.join(' ') : receptionistFallback(prepared.language);
             if (!emitted) send({ type: 'sentence', text: reply });

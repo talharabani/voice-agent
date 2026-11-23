@@ -7,28 +7,56 @@ export interface OllamaChatMessage {
   content: string;
 }
 
-export async function* ollamaChatStream(messages: OllamaChatMessage[], signal?: AbortSignal) {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (groqKey) {
-    const groqModel = process.env.GROQ_VOICE_MODEL || 'llama-3.3-70b-versatile';
-    const timeout = AbortSignal.timeout(Number(process.env.GROQ_TIMEOUT_MS || 30000));
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+const GROQ_MODEL_CANDIDATES = [
+  'qwen/qwen3.8-27b',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'llama-3.3-70b-versatile',
+];
+
+async function fetchGroqWithFallback(
+  groqKey: string,
+  preferredModel: string,
+  payload: Record<string, unknown>,
+  signal: AbortSignal
+): Promise<Response> {
+  const models = [preferredModel, ...GROQ_MODEL_CANDIDATES.filter((m) => m !== preferredModel)];
+  let lastRes: Response | null = null;
+  for (const model of models) {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${groqKey}`,
       },
-      body: JSON.stringify({
-        model: groqModel,
+      body: JSON.stringify({ ...payload, model }),
+      signal,
+    });
+    if (res.ok) return res;
+    lastRes = res;
+    if (res.status !== 404 && res.status !== 400) break;
+  }
+  throw new Error(`Groq voice model request failed (${lastRes?.status ?? 'unknown'})`);
+}
+
+export async function* ollamaChatStream(messages: OllamaChatMessage[], signal?: AbortSignal) {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    const groqModel = process.env.GROQ_VOICE_MODEL || 'qwen/qwen3.8-27b';
+    const timeout = AbortSignal.timeout(Number(process.env.GROQ_TIMEOUT_MS || 30000));
+    const response = await fetchGroqWithFallback(
+      groqKey,
+      groqModel,
+      {
         messages,
         stream: true,
         temperature: 0.4,
-        max_tokens: 256,
-      }),
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(`Groq voice model request failed (${response.status})`);
+        max_tokens: 350,
+      },
+      signal ? AbortSignal.any([signal, timeout]) : timeout
+    );
+    if (!response.body) {
+      throw new Error('Groq voice model response body empty');
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -85,26 +113,19 @@ export async function ollamaChat(
 ): Promise<string> {
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
-    const model = options?.model ?? process.env.GROQ_MODEL ?? "llama-3.1-8b-instant";
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${groqKey}`,
-      },
-      body: JSON.stringify({
-        model,
+    const model = options?.model ?? process.env.GROQ_MODEL ?? "qwen/qwen3.8-27b";
+    const res = await fetchGroqWithFallback(
+      groqKey,
+      model,
+      {
         messages,
         stream: false,
         temperature: 0.3,
         ...(options?.maxTokens ? { max_tokens: options.maxTokens } : {}),
         ...(options?.format === "json" ? { response_format: { type: "json_object" } } : {}),
-      }),
-      signal: AbortSignal.timeout(Number(process.env.GROQ_TIMEOUT_MS ?? 30_000)),
-    });
-    if (!res.ok) {
-      throw new Error(`Groq request failed: ${res.status} ${res.statusText}`);
-    }
+      },
+      AbortSignal.timeout(Number(process.env.GROQ_TIMEOUT_MS ?? 30_000))
+    );
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content ?? "";
   }
