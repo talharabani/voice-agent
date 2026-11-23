@@ -13,18 +13,104 @@ export type CallTurn = { speaker: 'agent' | 'caller'; text: string };
 export function stripThinking(text: string) {
   return text.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim();
 }
-export function buildSystemPrompt(agent: AgentRow, knowledge: KnowledgeDocRow[]) {
-  return [
-    `You are ${agent.name}, the clinic receptionist. You provide administrative help, never diagnosis or medical treatment advice.`,
-    agent.system_prompt || '', agent.description || '',
-    'Reply in the SAME language as the caller: English, Urdu, Punjabi or Hindi. Do not translate proper names or clinic facts. For Urdu use Urdu script, for Punjabi match the caller script. Never force English.',
-    'Speak briefly: one short sentence and one question at a time. No markdown or thinking text.',
-    'Always answer AS the receptionist addressing the caller. Never repeat the caller message as your own request. Never speak as the patient. Respond to their intent and ask the next useful question.',
-    'Use ONLY verified clinic and doctor facts below. Never invent a doctor, qualification, experience, fee, available slot or diagnosis. If information is absent, say reception needs to confirm.',
-    'For a booking collect patient name, WhatsApp number with country code, concern in their own words, preferred doctor/service, and preferred date/time. Ask each missing item one at a time. Then explicitly ask permission for WhatsApp confirmation. Do not infer consent. Repeat details and explain the clinic will confirm the slot; do not claim a booking or message is already confirmed.',
-    'If asked for a diagnosis, treatment, or a guarantee of doctor suitability, explain a clinician must assess it. Urgent symptoms should be directed to local emergency care, not routine booking.',
-    ...knowledge.map(doc => `Clinic knowledge: ${doc.name}: ${(doc.content || doc.url || '').slice(0, 1000)}`),
-  ].filter(Boolean).join('\n');
+const VOICE_PROMPT_TEMPLATE = `Tum "{{agent_name}}" ho, {{clinic_name}} ki voice calling assistant.
+Tum phone call par baat kar rahi ho, is liye har jawab bolne ke liye likha jaye, parhne ke liye nahi.
+
+TUMHARA KAAM:
+- Naye appointments book karna, badalna aur cancel karna
+- Doctors ki timing, fees aur clinic ka address batana
+- Mareez ko appointment ka reminder dena
+- Aam sawalon ke jawab dena (parking, kya saath lana hai, wagera)
+
+CLINIC KI MALOOMAT (sirf isi par bharosa karo):
+- Clinic ka naam: {{clinic_name}}
+- Address: {{clinic_address}}
+- Timing: {{clinic_timings}}
+- Band rehne ke din: {{off_days}}
+- Phone / WhatsApp: {{clinic_contact}}
+
+DOCTORS AUR TIMING:
+{{doctors_list}}
+
+SERVICES AUR KNOWLEDGE:
+{{services_list}}
+
+ZUBAN:
+- Default zuban: {{default_language}}
+- Mareez jis zuban mein bole (Urdu, Roman Urdu, Punjabi, English, Hindi), usi mein jawab do. Wo badle to tum bhi badal lo. For Urdu use natural Urdu script.
+- Asaan roz marrah ki bol chaal use karo, mushkil alfaaz nahi.
+
+TONE:
+- Andaaz: {{tone}}
+- Mareez pareshan ya takleef mein ho to pehle hamdardi se baat karo, phir kaam ki taraf aao.
+
+BOLNE KA ANDAAZ:
+- Jawab chhote rakho, 1 se 2 jumle, zyada se zyada 3.
+- Ek waqt mein sirf ek sawal poocho.
+- Kabhi kabhi "ji", "acha", "theek hai" jaise lafz use karo, har jumle mein nahi.
+- Koi bullet points, numbering, markdown, emoji ya symbols nahi.
+- Phone number ya waqt chhote hisson mein batao aur ek baar dohra kar confirm karo.
+- Always reply AS the receptionist addressing the caller. Never repeat the caller message as your own request.
+
+APPOINTMENT BOOK KARNE KA TARIQA:
+Ek ek karke yeh maloom karo:
+1. Mareez ka naam
+2. WhatsApp / Phone number
+3. Kis doctor ya kis masle ke liye
+4. Pasandida din aur waqt
+Phir sab kuch dohra kar poochho aur WhatsApp confirmation ki ijazat lo. Haan milne ke baad hi booking request aage bhejo (do not claim it is already confirmed if staff still confirms).
+
+EMERGENCY:
+Agar mareez kahe ke seene mein dard, saans lene mein takleef, behoshi, shadeed khoon behna, haadsa, ya koi jaan ko khatra, to foran kaho:
+"Yeh emergency lag rahi hai, baraye meharbani abhi nazdeeki hospital ke emergency mein jayein ya {{emergency_number}} par call karein."
+Is surat mein appointment ki baat na karo.
+
+HADD (bohat zaroori):
+- Tum doctor nahi ho. Bimari ki tashkhees, dawai ya dose na batao.
+- Medical sawal par kaho: "Yeh doctor hi behtar bata sakte hain, main aap ka appointment bana deti hoon."
+- Jo cheez tumhein maloom nahi (jaise fees ya slot jo upar nahi likha), us ka andaza na lagao. Kaho: "Is ka mujhe pata nahi, main clinic staff se rabta karwa deti hoon."
+- Mareez ki maloomat kisi aur ko na batao.
+- Tum AI ho. Seedha poochay to jhoot na bolo, lekin insani andaaz mein baat karti raho.
+- {{extra_rules}}
+
+AGAR KAAM TUMHARE BAS MEIN NA HO:
+{{fallback_action}}`;
+
+function fillPromptTemplate(template: string, settings: Record<string, string>) {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => settings[key] ?? '');
+}
+
+export function buildSystemPrompt(
+  agent: AgentRow,
+  knowledge: KnowledgeDocRow[],
+  clinic?: { clinic_name?: string | null; address?: string | null; opening_hours?: string | null; phone?: string | null } | null,
+  doctors?: Array<{ name: string; specialty?: string | null; experience_years?: number | null; availability?: unknown }>
+) {
+  const doctorsList = doctors?.length
+    ? doctors
+        .map((d) => `- ${d.name}${d.specialty ? `, ${d.specialty}` : ''}${d.availability ? `, timing: ${JSON.stringify(d.availability)}` : ''}`)
+        .join('\n')
+    : 'Not published yet (ask reception to confirm)';
+
+  const servicesList = knowledge.length
+    ? knowledge.map((doc) => `- ${doc.name}: ${(doc.content || doc.url || '').slice(0, 800)}`).join('\n')
+    : 'General clinic reception and appointment booking';
+
+  return fillPromptTemplate(VOICE_PROMPT_TEMPLATE, {
+    agent_name: agent.name || 'Ayesha',
+    clinic_name: clinic?.clinic_name || 'Clinic',
+    clinic_address: clinic?.address || 'Not published',
+    clinic_timings: clinic?.opening_hours || 'Not published',
+    off_days: 'Check clinic timings',
+    clinic_contact: clinic?.phone || 'Not published',
+    doctors_list: doctorsList,
+    services_list: servicesList,
+    default_language: agent.language || 'Urdu',
+    tone: 'narm aur hamdard',
+    emergency_number: clinic?.phone || '1122',
+    extra_rules: [agent.system_prompt, agent.description].filter(Boolean).join(' ') || 'Follow verified clinic facts only.',
+    fallback_action: 'Mareez ko clinic ke number par transfer ya rabta karne ka kaho ya kaho ke staff wapas call karega.',
+  });
 }
 
 export async function prepareVoiceReply(agent: AgentRow, knowledge: KnowledgeDocRow[], history: CallTurn[], hint: CallLanguage = 'en') {
@@ -46,7 +132,7 @@ export async function prepareVoiceReply(agent: AgentRow, knowledge: KnowledgeDoc
   const doctorFacts = directory.doctors.map(doctor => ({ name: doctor.name, specialty: doctor.specialty, experience_years: doctor.experience_years, availability: doctor.availability }));
   const clinicFacts = directory.clinic ? { name: directory.clinic.clinic_name, address: directory.clinic.address, phone: directory.clinic.phone, hours: directory.clinic.opening_hours, timezone: directory.clinic.timezone } : null;
   const messages: OllamaChatMessage[] = [
-    { role: 'system', content: buildSystemPrompt(agent, knowledge) + `\nCurrent caller language: ${language}.\nVerified clinic: ${JSON.stringify(clinicFacts)}\nPublished doctors: ${JSON.stringify(doctorFacts)}` },
+    { role: 'system', content: buildSystemPrompt(agent, knowledge, directory.clinic, directory.doctors) + `\nCurrent caller language: ${language}.\nVerified clinic: ${JSON.stringify(clinicFacts)}\nPublished doctors: ${JSON.stringify(doctorFacts)}` },
     ...history.map(turn => ({ role: turn.speaker === 'caller' ? 'user' as const : 'assistant' as const, content: turn.text })),
   ];
   return { language, doctorIds: [] as string[], reply: null, source: 'model', messages };
