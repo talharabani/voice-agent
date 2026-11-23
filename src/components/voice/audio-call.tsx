@@ -118,9 +118,9 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
         const amplitude = mute.current ? 0 : samples.reduce((sum, n) => sum + n, 0) / samples.length / 255
         orbRef.current?.style.setProperty('--mic-level', String(amplitude))
         if (phaseRef.current === 'speaking' && !mute.current) {
-          if (amplitude > 0.14) {
+          if (amplitude > 0.22) {
             bargeFrames++
-            if (bargeFrames >= 6) {
+            if (bargeFrames >= 10) {
               bargeFrames = 0
               interruptRef.current()
             }
@@ -352,7 +352,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
         return
       }
       if (interimText) {
-        silenceTimer = setTimeout(() => commitSpeech(interimText), 700)
+        silenceTimer = setTimeout(() => commitSpeech(interimText), 1500)
       }
     }
     rec.onerror = event => {
