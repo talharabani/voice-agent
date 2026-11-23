@@ -76,6 +76,9 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   const started = useRef(0)
   const phaseRef = useRef<Phase>('idle')
   const finishSpeech = useRef<(() => void) | null>(null)
+  const interruptRef = useRef<() => void>(() => {})
+  const fillerAudio = useRef<HTMLAudioElement | null>(null)
+  const fillerBlobs = useRef<Partial<Record<CallLanguage, Blob>>>({})
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listenRef = useRef<() => void>(() => {})
   const turnRef = useRef<(text: string) => Promise<void>>(async () => {})
@@ -109,10 +112,24 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       const analyser = context.createAnalyser(); analyser.fftSize = 256
       context.createMediaStreamSource(media).connect(analyser)
       const samples = new Uint8Array(analyser.frequencyBinCount)
+      let bargeFrames = 0
       const draw = () => {
         analyser.getByteFrequencyData(samples)
         const amplitude = mute.current ? 0 : samples.reduce((sum, n) => sum + n, 0) / samples.length / 255
         orbRef.current?.style.setProperty('--mic-level', String(amplitude))
+        if (phaseRef.current === 'speaking' && !mute.current) {
+          if (amplitude > 0.14) {
+            bargeFrames++
+            if (bargeFrames >= 6) {
+              bargeFrames = 0
+              interruptRef.current()
+            }
+          } else {
+            bargeFrames = 0
+          }
+        } else {
+          bargeFrames = 0
+        }
         animationFrame.current = requestAnimationFrame(draw)
       }
       void context.resume().catch(() => {}); draw()
@@ -146,6 +163,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     stopRecognition()
     window.speechSynthesis?.cancel()
     finishSpeech.current?.()
+    fillerAudio.current?.pause()
     speaker.current?.pause()
     stream.current?.getTracks().forEach(track => track.stop())
     stream.current = null
@@ -365,12 +383,32 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     pushTurn({ speaker: 'caller', text })
     changePhase('thinking')
     const session = generation.current
+    let fillerTimer: ReturnType<typeof setTimeout> | null = null
+    let fillerUrl = ''
+    const stopFiller = () => {
+      if (fillerTimer) { clearTimeout(fillerTimer); fillerTimer = null }
+      if (fillerAudio.current) { fillerAudio.current.pause(); fillerAudio.current.currentTime = 0 }
+      if (fillerUrl) { URL.revokeObjectURL(fillerUrl); fillerUrl = '' }
+    }
+    const lang = currentLanguage.current
+    const cachedFiller = fillerBlobs.current[lang]
+    if (cachedFiller) {
+      fillerTimer = setTimeout(() => {
+        if (!active.current || session !== generation.current || phaseRef.current !== 'thinking') return
+        fillerUrl = URL.createObjectURL(cachedFiller)
+        fillerAudio.current ??= new Audio()
+        fillerAudio.current.src = fillerUrl
+        void fillerAudio.current.play().catch(() => {})
+      }, 420)
+    }
     try {
       const { reply, playback } = await converse()
+      stopFiller()
       if (!active.current || session !== generation.current) return
       await playback
       if (active.current && session === generation.current) { pushTurn({ speaker: 'agent', text: reply }); pendingSpoken.current = ''; setStreamingReply(''); listenRef.current() }
     } catch (err) {
+      stopFiller()
       if (!active.current || session !== generation.current) return
       generation.current++; request.current?.abort(); window.speechSynthesis.cancel(); finishSpeech.current?.()
       if (pendingSpoken.current) { pushTurn({ speaker: 'agent', text: pendingSpoken.current }); pendingSpoken.current = ''; setStreamingReply('') }
@@ -393,6 +431,15 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       if (!active.current || session !== generation.current) { media.getTracks().forEach(t => t.stop()); return }
       stream.current = media
       startMeter(media)
+      // Pre-warm short natural thinking fillers so there is zero dead air while the model thinks.
+      const warmFiller = (lang: CallLanguage, phrase: string) => {
+        if (fillerBlobs.current[lang]) return
+        void prepareSpeechAudio({ text: phrase, language: lang, style: presetRef.current, token, agentId, signal: new AbortController().signal })
+          .then(blob => { fillerBlobs.current[lang] = blob })
+          .catch(() => {})
+      }
+      warmFiller('ur', 'جی، ایک لمحہ دیکھتی ہوں۔')
+      warmFiller('en', 'Sure, one moment.')
       const { reply, playback } = await converse()
       if (!active.current || session !== generation.current) return
       await playback
@@ -431,10 +478,11 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     else if (phaseRef.current === 'listening') listenRef.current()
   }
   function interrupt() {
-    if (phaseRef.current !== 'speaking') return
+    if (phaseRef.current !== 'speaking' && phaseRef.current !== 'buffering') return
     if (pendingSpoken.current) pushTurn({ speaker: 'agent', text: pendingSpoken.current })
-    pendingSpoken.current = ''; setStreamingReply(''); generation.current++; request.current?.abort(); window.speechSynthesis.cancel(); finishSpeech.current?.(); listenRef.current()
+    pendingSpoken.current = ''; setStreamingReply(''); generation.current++; request.current?.abort(); window.speechSynthesis.cancel(); finishSpeech.current?.(); fillerAudio.current?.pause(); listenRef.current()
   }
+  interruptRef.current = interrupt
 
   const inCall = phase !== 'idle' && phase !== 'ended'
   const label = phase === 'listening' && muted ? 'Microphone muted' : ({ idle: 'A conversation, just a call away.', connecting: 'Connecting your call', listening: 'Listening to you', thinking: 'One moment', buffering: 'Preparing speaker audio', speaking: `${name || 'Your agent'} is speaking`, ended: 'Call ended' })[phase]
