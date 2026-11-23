@@ -67,6 +67,9 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   const mute = useRef(false)
   const generation = useRef(0)
   const history = useRef<Turn[]>([])
+  const [messages, setMessages] = useState<Turn[]>([])
+  const [streamingReply, setStreamingReply] = useState('')
+  const [copiedChat, setCopiedChat] = useState(false)
   const recognition = useRef<Recognition | null>(null)
   const stream = useRef<MediaStream | null>(null)
   const request = useRef<AbortController | null>(null)
@@ -87,7 +90,17 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       if (voicePresets.some(item => item.id === saved)) { presetRef.current = saved as VoicePresetId; setPreset(saved as VoicePresetId) }
       const uri = localStorage.getItem('voxa-native-voice') ?? ''; voiceUriRef.current = uri; setVoiceUri(uri)
     } catch { /* Browser storage can be unavailable in private sessions. */ }
-    return () => synth?.removeEventListener('voiceschanged', update)
+    function copyTranscript() {
+    const all = [...messages, ...(streamingReply ? [{ speaker: 'agent' as const, text: streamingReply }] : [])]
+    const formatted = all.map(m => `${m.speaker === 'caller' ? 'Caller' : 'Agent'}: ${m.text}`).join('\n')
+    if (!formatted) return
+    void navigator.clipboard?.writeText(formatted).then(() => {
+      setCopiedChat(true)
+      setTimeout(() => setCopiedChat(false), 1800)
+    })
+  }
+
+  return () => synth?.removeEventListener('voiceschanged', update)
   }, [])
 
   function startMeter(media: MediaStream) {
@@ -119,6 +132,10 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   }
 
   function changePhase(value: Phase) { phaseRef.current = value; setPhase(value) }
+  function pushTurn(turn: Turn) {
+    history.current.push(turn)
+    setMessages([...history.current])
+  }
   function stopRecognition() {
     if (retryTimer.current) clearTimeout(retryTimer.current)
     const old = recognition.current
@@ -159,7 +176,17 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       try { if (!localStorage.getItem('voxa-voice-style') && voicePresets.some(item => item.id === defaultVoice)) { presetRef.current = defaultVoice; setPreset(defaultVoice) } } catch {}
     })
       .catch(err => { if (!cancelled) setError(err.message) })
-    return () => {
+    function copyTranscript() {
+    const all = [...messages, ...(streamingReply ? [{ speaker: 'agent' as const, text: streamingReply }] : [])]
+    const formatted = all.map(m => `${m.speaker === 'caller' ? 'Caller' : 'Agent'}: ${m.text}`).join('\n')
+    if (!formatted) return
+    void navigator.clipboard?.writeText(formatted).then(() => {
+      setCopiedChat(true)
+      setTimeout(() => setCopiedChat(false), 1800)
+    })
+  }
+
+  return () => {
       cancelled = true; active.current = false; generation.current++
       request.current?.abort(); stopAudio()
     }
@@ -170,7 +197,17 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   useEffect(() => {
     if (phase === 'idle' || phase === 'ended') return
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started.current) / 1000)), 1000)
-    return () => clearInterval(timer)
+    function copyTranscript() {
+    const all = [...messages, ...(streamingReply ? [{ speaker: 'agent' as const, text: streamingReply }] : [])]
+    const formatted = all.map(m => `${m.speaker === 'caller' ? 'Caller' : 'Agent'}: ${m.text}`).join('\n')
+    if (!formatted) return
+    void navigator.clipboard?.writeText(formatted).then(() => {
+      setCopiedChat(true)
+      setTimeout(() => setCopiedChat(false), 1800)
+    })
+  }
+
+  return () => clearInterval(timer)
   }, [phase])
 
   async function converse() {
@@ -222,7 +259,12 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     const onStart = () => {
       setAudioProblem(false)
       if (!track) setPreviewAudible(true)
-      if (track) { pendingSpoken.current += (pendingSpoken.current ? ' ' : '') + text; changePhase('speaking'); setResponseTime((performance.now() - requestStarted.current) / 1000) }
+      if (track) {
+        pendingSpoken.current += (pendingSpoken.current ? ' ' : '') + text
+        setStreamingReply(pendingSpoken.current)
+        changePhase('speaking')
+        setResponseTime((performance.now() - requestStarted.current) / 1000)
+      }
     }
     try {
       speaker.current ??= new Audio()
@@ -303,18 +345,18 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       setError('This call has reached its conversation limit. End the call to save it.'); return
     }
     currentLanguage.current = detectCallLanguage(text, currentLanguage.current); setLanguage(currentLanguage.current)
-    history.current.push({ speaker: 'caller', text })
+    pushTurn({ speaker: 'caller', text })
     changePhase('thinking')
     const session = generation.current
     try {
       const { reply, playback } = await converse()
       if (!active.current || session !== generation.current) return
       await playback
-      if (active.current && session === generation.current) { history.current.push({ speaker: 'agent', text: reply }); pendingSpoken.current = ''; listenRef.current() }
+      if (active.current && session === generation.current) { pushTurn({ speaker: 'agent', text: reply }); pendingSpoken.current = ''; setStreamingReply(''); listenRef.current() }
     } catch (err) {
       if (!active.current || session !== generation.current) return
       generation.current++; request.current?.abort(); window.speechSynthesis.cancel(); finishSpeech.current?.()
-      if (pendingSpoken.current) { history.current.push({ speaker: 'agent', text: pendingSpoken.current }); pendingSpoken.current = '' }
+      if (pendingSpoken.current) { pushTurn({ speaker: 'agent', text: pendingSpoken.current }); pendingSpoken.current = ''; setStreamingReply('') }
       setError(err instanceof Error ? err.message : 'Connection interrupted.')
       listenRef.current()
     }
@@ -324,7 +366,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     if (active.current || saving || previewing) return
     const session = ++generation.current
     active.current = true; mute.current = false; setMuted(false)
-    history.current = []; setError(''); setNote(''); setElapsed(0); setBookingDraft(null); setHighlighted([])
+    history.current = []; setMessages([]); setStreamingReply(''); setError(''); setNote(''); setElapsed(0); setBookingDraft(null); setHighlighted([])
     started.current = Date.now(); changePhase('connecting')
     // Prime speech synthesis during the user gesture for mobile browsers.
     window.speechSynthesis.resume()
@@ -337,7 +379,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       const { reply, playback } = await converse()
       if (!active.current || session !== generation.current) return
       await playback
-      if (active.current && session === generation.current) { history.current.push({ speaker: 'agent', text: reply }); pendingSpoken.current = ''; listenRef.current() }
+      if (active.current && session === generation.current) { pushTurn({ speaker: 'agent', text: reply }); pendingSpoken.current = ''; setStreamingReply(''); listenRef.current() }
     } catch (err) {
       if (session !== generation.current) return
       active.current = false; stopAudio(); changePhase('ended')
@@ -373,8 +415,8 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   }
   function interrupt() {
     if (phaseRef.current !== 'speaking') return
-    if (pendingSpoken.current) history.current.push({ speaker: 'agent', text: pendingSpoken.current })
-    pendingSpoken.current = ''; generation.current++; request.current?.abort(); window.speechSynthesis.cancel(); finishSpeech.current?.(); listenRef.current()
+    if (pendingSpoken.current) pushTurn({ speaker: 'agent', text: pendingSpoken.current })
+    pendingSpoken.current = ''; setStreamingReply(''); generation.current++; request.current?.abort(); window.speechSynthesis.cancel(); finishSpeech.current?.(); listenRef.current()
   }
 
   const inCall = phase !== 'idle' && phase !== 'ended'
@@ -387,6 +429,16 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     if (phaseRef.current === 'speaking') interrupt()
     void turnRef.current(localized(currentLanguage.current, `Tell me about ${doctor.name}`, `\u0645\u062c\u06be\u06d2 ${doctor.name} \u06a9\u06d2 \u0628\u0627\u0631\u06d2 \u0645\u06cc\u06ba \u0628\u062a\u0627\u0626\u06cc\u06ba`, `${doctor.name} \u0628\u0627\u0631\u06d2 \u062f\u0633\u0648`, `${doctor.name} \u0915\u0947 \u092c\u093e\u0930\u0947 \u092e\u0947\u0902 \u092c\u0924\u093e\u090f\u0901`))
   }
+  function copyTranscript() {
+    const all = [...messages, ...(streamingReply ? [{ speaker: 'agent' as const, text: streamingReply }] : [])]
+    const formatted = all.map(m => `${m.speaker === 'caller' ? 'Caller' : 'Agent'}: ${m.text}`).join('\n')
+    if (!formatted) return
+    void navigator.clipboard?.writeText(formatted).then(() => {
+      setCopiedChat(true)
+      setTimeout(() => setCopiedChat(false), 1800)
+    })
+  }
+
   return (
     <section className="clinic-call-shell mx-auto w-full max-w-7xl text-brand-text">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-brand-border bg-brand-surface px-5 py-4 sm:px-7">
@@ -412,6 +464,60 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
               <div className="flex items-center justify-center gap-5">{inCall ? <><button onClick={toggleMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} className={`flex size-14 items-center justify-center rounded-full border border-brand-border ${muted ? 'bg-brand-text text-brand-bg' : 'bg-brand-bg'}`}>{muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}</button><button onClick={endCall} aria-label="End call" className="flex size-16 items-center justify-center rounded-full bg-[#B74434] text-white shadow-lg hover:bg-[#9c382b]"><PhoneOff className="size-6" /></button><span aria-label="Speaker output" className="flex size-14 items-center justify-center rounded-full border border-brand-border bg-brand-bg"><Volume2 className="size-5" /></span></> : <Button onClick={startCall} disabled={!name || !supported || saving || previewing} className="h-14 rounded-full px-8 text-base">{saving ? <Loader2 className="size-5 animate-spin" /> : <Phone className="size-5" />}{saving ? 'Saving call' : phase === 'ended' ? 'Call reception again' : 'Talk to reception'}</Button>}</div>
               <p className="max-w-sm text-xs leading-relaxed text-brand-muted">{inCall ? 'Speak naturally. Doctor profiles appear beside your call. Hang up to save your request.' : 'Ask about our doctors, clinic information or an appointment. No chat box, just your voice.'}</p>
               <div className="flex flex-wrap justify-center gap-3 font-data text-[9px] uppercase tracking-widest text-brand-muted"><span>Reply: {({en:'English',ur:'Urdu',pa:'Punjabi',hi:'Hindi'})[language]}</span>{responseTime !== null && <span>Last response {responseTime.toFixed(1)}s</span>}</div>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-brand-border bg-brand-surface p-5">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="font-display text-base font-medium">Live conversation chat</h2>
+                <p className="mt-0.5 text-xs text-brand-muted">Temporary transcript to review model accuracy.</p>
+              </div>
+              <button
+                type="button"
+                onClick={copyTranscript}
+                disabled={messages.length === 0 && !streamingReply}
+                className="rounded-full border border-brand-border px-3 py-1.5 text-xs disabled:opacity-40 hover:bg-brand-bg"
+              >
+                {copiedChat ? 'Copied' : 'Copy chat'}
+              </button>
+            </div>
+            <div className="max-h-72 space-y-2.5 overflow-y-auto rounded-xl border border-brand-border/70 bg-brand-bg/60 p-3">
+              {messages.length === 0 && !streamingReply ? (
+                <p className="py-6 text-center text-xs text-brand-muted">Start the call to see live caller &amp; agent messages here.</p>
+              ) : (
+                <>
+                  {messages.map((turn, index) => (
+                    <div
+                      key={`${turn.speaker}-${index}`}
+                      className={`flex flex-col ${turn.speaker === 'caller' ? 'items-end' : 'items-start'}`}
+                    >
+                      <span className="mb-1 font-data text-[9px] uppercase tracking-widest text-brand-muted">
+                        {turn.speaker === 'caller' ? 'You' : name || 'Agent'}
+                      </span>
+                      <div
+                        dir="auto"
+                        className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+                          turn.speaker === 'caller'
+                            ? 'bg-brand-text text-brand-bg'
+                            : 'border border-brand-border bg-brand-surface text-brand-text'
+                        }`}
+                      >
+                        {turn.text}
+                      </div>
+                    </div>
+                  ))}
+                  {streamingReply && (
+                    <div className="flex flex-col items-start">
+                      <span className="mb-1 font-data text-[9px] uppercase tracking-widest text-brand-muted">
+                        {name || 'Agent'} (speaking)
+                      </span>
+                      <div dir="auto" className="max-w-[85%] rounded-2xl border border-brand-border bg-brand-surface px-3.5 py-2 text-sm leading-relaxed text-brand-text">
+                        {streamingReply}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
           <div className="rounded-2xl border border-brand-border bg-brand-surface p-5"><div className="mb-4 flex items-center justify-between"><div><h2 className="font-display text-base font-medium">Choose the voice's tone</h2><p className="mt-1 text-xs text-brand-muted">Language follows the conversation. Tone is your choice.</p></div><button disabled={inCall || !supported || !name || previewing} onClick={previewVoice} className="rounded-full border border-brand-border px-3 py-2 text-xs disabled:opacity-40">{previewing ? 'Playing...' : 'Preview'}</button></div>
