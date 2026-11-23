@@ -311,18 +311,34 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     if (!Ctor) return
     const rec = new Ctor()
     recognition.current = rec
-    rec.lang = inputOverrideRef.current || languageLocales[currentLanguage.current]; rec.continuous = false; rec.interimResults = false
+    rec.lang = inputOverrideRef.current || languageLocales[currentLanguage.current]; rec.continuous = false; rec.interimResults = true
     let text = ''
+    let interimText = ''
     let failed = false
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null
+    const commitSpeech = (spoken: string) => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
+      const cleaned = spoken.trim()
+      if (cleaned && active.current && !mute.current && recognition.current === rec) {
+        text = cleaned
+        void turnRef.current(cleaned)
+      }
+    }
     rec.onresult = event => {
-      text = Array.from(event.results).filter(result => result.isFinal).map(result => result[0].transcript).join(' ').trim()
-      // A final speech result is ready to send; do not wait for the browser's
-      // extra recognition-session silence timeout before contacting the agent.
-      if (text && active.current && !mute.current && recognition.current === rec) {
-        void turnRef.current(text)
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
+      const results = Array.from(event.results)
+      const finalText = results.filter(result => result.isFinal).map(result => result[0].transcript).join(' ').trim()
+      interimText = results.map(result => result[0].transcript).join(' ').trim()
+      if (finalText) {
+        commitSpeech(finalText)
+        return
+      }
+      if (interimText) {
+        silenceTimer = setTimeout(() => commitSpeech(interimText), 700)
       }
     }
     rec.onerror = event => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
       if (event.error === 'no-speech' || event.error === 'aborted') return
       failed = true
       setError(event.error === 'not-allowed' || event.error === 'service-not-allowed'
@@ -331,9 +347,10 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
       mute.current = true; setMuted(true)
     }
     rec.onend = () => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null }
       if (!active.current || mute.current || failed || recognition.current !== rec) return
-      if (text) { void turnRef.current(text); return }
-      retryTimer.current = setTimeout(() => listenRef.current(), 400)
+      if (text || interimText) { commitSpeech(text || interimText); return }
+      retryTimer.current = setTimeout(() => listenRef.current(), 50)
     }
     try { rec.start() } catch { setError('Could not start your microphone. End the call and try again.') }
   }

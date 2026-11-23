@@ -3,7 +3,7 @@ export const languageLocales: Record<CallLanguage, string> = { en: 'en-US', ur: 
 export function detectCallLanguage(text: string, hint: CallLanguage = 'en'): CallLanguage {
   if (/\b(?:speak|reply|respond|talk)\b.{0,20}\burdu\b|اردو میں|उर्दू में|ਉਰਦੂ/iu.test(text)) return 'ur';
   if (/\b(?:speak|reply|respond|talk)\b.{0,20}\bpunjabi\b|پنجابی وچ|ਪੰਜਾਬੀ/iu.test(text)) return 'pa';
-  if (/\b(?:speak|reply|respond|talk)\b.{0,20}\benglish\b|انگلش|अंग्रेज़ी/iu.test(text)) return 'en';
+  if (/\b(?:speak|reply|respond|talk)\b.{0,20}\benglish\b|انگلش میں|کین یو ٹاک ان انگلش|अंग्रेज़ी में/iu.test(text)) return 'en';
   if (/[\u0a00-\u0a7f]/u.test(text)) return /उर्दू|ਉਰਦੂ/u.test(text) ? 'ur' : 'pa';
   if (/[\u0900-\u097f]/u.test(text)) return 'hi';
   if (/[\u0600-\u06ff]/u.test(text)) return /تسی|تُسی|تہاڈ|تھواڈ|مینوں|نوں|کیہڑا|کیہڑی|وچ|دسّ|ہوندا/u.test(text) ? 'pa' : 'ur';
