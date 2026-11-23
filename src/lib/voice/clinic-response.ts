@@ -123,19 +123,14 @@ export async function prepareVoiceReply(agent: AgentRow, knowledge: KnowledgeDoc
   if (!activeBooking && /^(?:hello|hi|hey|salaam|salam|ass?alam[ -]?o?[ -]?alaikum|السلام\s*علیکم|اسلام\s*علیکم|سلام|ہیلو|नमस्ते)[\s.!،؟۔]*$/iu.test(latest.trim())) return { language, doctorIds: [] as string[], source: 'greeting', reply: greetingFor(agent.name, language), messages: [] as OllamaChatMessage[] };
   const directory = await loadClinicDirectory(agent.user_id);
   const direct = answerFromDirectory(latest, directory.doctors, directory.clinic, language, directory.available);
-  if (direct?.kind === 'availability') return { ...direct, language, source: direct.kind, messages: [] as OllamaChatMessage[] };
-  const booking = direct?.kind === 'urgent' ? null : answerBookingFlow(history, directory.doctors, language);
-  if (booking) return { language, doctorIds: direct?.doctorIds ?? [], reply: booking.reply, source: 'booking', messages: [] as OllamaChatMessage[], bookingDraft: booking.draft };
-  if (direct) return { ...direct, language, source: direct.kind, messages: [] as OllamaChatMessage[] };
-  const introducedName = extractIntroducedName(latest);
-  if (introducedName) return { language, doctorIds: [] as string[], source: 'introduction', messages: [] as OllamaChatMessage[], reply: acknowledgeName(introducedName, language) + ' ' + localized(language, 'How can I help you today?', 'آپ کو کس سلسلے میں مدد چاہیے؟', 'تہاڈے لئی کی مدد کراں؟', 'आपको किस बारे में मदद चाहिए?') };
+  if (direct?.kind === 'urgent') return { ...direct, language, source: direct.kind, messages: [] as OllamaChatMessage[] };
   const doctorFacts = directory.doctors.map(doctor => ({ name: doctor.name, specialty: doctor.specialty, experience_years: doctor.experience_years, availability: doctor.availability }));
   const clinicFacts = directory.clinic ? { name: directory.clinic.clinic_name, address: directory.clinic.address, phone: directory.clinic.phone, hours: directory.clinic.opening_hours, timezone: directory.clinic.timezone } : null;
   const messages: OllamaChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(agent, knowledge, directory.clinic, directory.doctors) + `\nCurrent caller language: ${language}.\nVerified clinic: ${JSON.stringify(clinicFacts)}\nPublished doctors: ${JSON.stringify(doctorFacts)}` },
     ...history.map(turn => ({ role: turn.speaker === 'caller' ? 'user' as const : 'assistant' as const, content: turn.text })),
   ];
-  return { language, doctorIds: [] as string[], reply: null, source: 'model', messages };
+  return { language, doctorIds: direct?.doctorIds ?? ([] as string[]), reply: null, source: 'model', messages };
 }
 
 export async function generateAgentReply(agent: AgentRow, knowledge: KnowledgeDocRow[], history: CallTurn[]): Promise<string> {
@@ -166,7 +161,7 @@ export async function createVoiceStream(agent: AgentRow, knowledge: KnowledgeDoc
           let timer: ReturnType<typeof setTimeout> | undefined;
           let emitted = false;
           const spoken: string[] = [];
-          const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Voice reply deadline')), 6000); });
+          const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Voice reply deadline')), 15000); });
           const caller = [...history].reverse().find(turn => turn.speaker === 'caller')?.text ?? '';
           const emit = (text: string) => {
             if (isCallerEcho(text, caller)) throw new Error('Caller echo rejected');
