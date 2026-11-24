@@ -22,12 +22,12 @@ function edgeVoiceFor(language: Language, style: Style): { voice: string; rate?:
   const isMale = style === 'calm-male' || style === 'deep-male';
   const prosody =
     style === 'deep-male'
-      ? { rate: '-6%', pitch: '-8Hz' }
+      ? { rate: '+2%', pitch: '-6Hz' }
       : style === 'youthful'
-        ? { rate: '+6%', pitch: '+6Hz' }
+        ? { rate: '+12%', pitch: '+6Hz' }
         : style === 'gentle'
-          ? { rate: '-4%', pitch: '+2Hz' }
-          : {};
+          ? { rate: '+4%', pitch: '+2Hz' }
+          : { rate: '+8%' };
 
   switch (language) {
     case 'ur':

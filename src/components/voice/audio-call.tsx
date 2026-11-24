@@ -349,7 +349,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
         return
       }
       if (interimText) {
-        silenceTimer = setTimeout(() => commitSpeech(interimText), 1500)
+        silenceTimer = setTimeout(() => commitSpeech(interimText), 950)
       }
     }
     rec.onerror = event => {
