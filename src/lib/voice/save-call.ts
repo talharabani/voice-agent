@@ -5,6 +5,17 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import type { CallTurn } from "@/lib/voice/respond";
 import { readBookingDraft } from '@/lib/voice/booking-flow';
 import { loadClinicDirectory } from '@/lib/clinic-directory';
+import { sendAppointmentConfirmation, whatsappConfigured } from '@/lib/whatsapp';
+
+function normalizePhone(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/[\s()-]/g, '');
+  if (/^\+[1-9]\d{7,14}$/.test(digits)) return digits;
+  // Convert Pakistani local mobile format 03XXXXXXXXX -> +923XXXXXXXXX
+  if (/^03\d{9}$/.test(digits)) return `+92${digits.slice(1)}`;
+  if (/^923\d{9}$/.test(digits)) return `+${digits}`;
+  return raw.trim() || null;
+}
 
 interface SaveCallInput {
   agentId: string;
@@ -24,12 +35,22 @@ interface SaveCallInput {
 export async function saveCallRecord(input: SaveCallInput) {
   const directory = await loadClinicDirectory(input.userId);
   const draft = readBookingDraft(input.transcript, directory.doctors);
-  const bookingTask = draft.active || draft.cancelled ? Promise.resolve({
-    requested: !draft.cancelled, whatsapp_consent: draft.consent === true,
-    customer_name: draft.name, customer_phone: draft.phone, requested_time: draft.time,
-    requested_doctor: draft.doctor, patient_concern: draft.concern, service: 'Clinic consultation',
-  }) : extractAppointment(input.transcript);
-  const [analysis, booking] = await Promise.all([analyzeCallTranscript(input.transcript), bookingTask]);
+  const [analysis, extracted] = await Promise.all([
+    analyzeCallTranscript(input.transcript),
+    extractAppointment(input.transcript),
+  ]);
+  const booking = draft.cancelled
+    ? { ...extracted, requested: false }
+    : {
+        requested: extracted.requested || draft.active,
+        whatsapp_consent: extracted.whatsapp_consent || draft.consent === true,
+        customer_name: extracted.customer_name ?? draft.name,
+        customer_phone: normalizePhone(extracted.customer_phone ?? draft.phone),
+        requested_time: extracted.requested_time ?? draft.time,
+        requested_doctor: extracted.requested_doctor ?? draft.doctor,
+        patient_concern: extracted.patient_concern ?? draft.concern,
+        service: extracted.service || 'Clinic consultation',
+      };
   const warnings: string[] = [];
 
   const { data: conversation, error: conversationError } = await supabaseAdmin
@@ -54,7 +75,7 @@ export async function saveCallRecord(input: SaveCallInput) {
   }
 
   let lead = null;
-  const phone = analysis.lead.phone ?? input.callerPhone ?? null;
+  const phone = normalizePhone(analysis.lead.phone ?? booking.customer_phone ?? input.callerPhone ?? null);
   if (analysis.lead.email || phone) {
     const { data: leadRow, error: leadError } = await supabaseAdmin
       .from("leads")
@@ -108,7 +129,14 @@ export async function saveCallRecord(input: SaveCallInput) {
       .single();
 
     if (apptError) { console.error("Failed to store appointment", apptError); warnings.push("Call saved, but the appointment request could not be recorded. Please contact the clinic."); }
-    else appointment = apptRow;
+    else {
+      appointment = apptRow;
+      if (apptRow && booking.whatsapp_consent && (booking.customer_phone ?? phone) && whatsappConfigured()) {
+        await sendAppointmentConfirmation(apptRow.id, input.userId).catch((err) => {
+          console.error("Auto WhatsApp confirmation failed", err);
+        });
+      }
+    }
   }
 
   return { conversation, lead, appointment, analysis, warnings };

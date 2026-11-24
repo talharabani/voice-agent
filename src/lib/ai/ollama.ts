@@ -50,7 +50,7 @@ export async function* ollamaChatStream(messages: OllamaChatMessage[], signal?: 
       {
         messages,
         stream: true,
-        temperature: 0.4,
+        temperature: 0.55,
         max_tokens: 350,
       },
       signal ? AbortSignal.any([signal, timeout]) : timeout
