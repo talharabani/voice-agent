@@ -7,6 +7,7 @@ import { takeSpeechSegments } from '@/lib/voice/protocol';
 import { answerBookingFlow, readBookingDraft } from '@/lib/voice/booking-flow';
 import { extractIntroducedName, acknowledgeName } from '@/lib/voice/introduction';
 import { isCallerEcho, receptionistFallback } from '@/lib/voice/reply-guard';
+import { saveAppointmentMidCall } from '@/lib/voice/save-call';
 import type { AgentRow, KnowledgeDocRow } from '@/types/database';
 
 export type CallTurn = { speaker: 'agent' | 'caller'; text: string };
@@ -188,6 +189,9 @@ export async function createVoiceStream(agent: AgentRow, knowledge: KnowledgeDoc
           if (!reply) throw new Error('The model returned an empty answer');
           for (const text of takeSpeechSegments(reply.slice(spokenLength), true).sentences) emit(text);
           send({ type: 'done', reply });
+          if (history.length >= 4 && /whatsapp|واٹس ایپ|بھیج|تصدیق|confirm/iu.test(caller + ' ' + reply)) {
+            void saveAppointmentMidCall(agent.id, agent.user_id, [...history, { speaker: 'agent', text: reply }]).catch(() => {});
+          }
           } catch (error) {
             if (combined.aborted) throw error;
             console.error('Voice stream model fallback:', error instanceof Error ? error.message : 'Unknown error');
