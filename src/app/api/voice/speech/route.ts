@@ -42,22 +42,32 @@ function edgeVoiceFor(language: Language, style: Style): { voice: string; rate?:
   }
 }
 
-async function synthesizeEdgeTts(text: string, language: Language, style: Style): Promise<Buffer> {
+function synthesizeEdgeTtsStream(text: string, language: Language, style: Style): Promise<ReadableStream<Uint8Array>> {
   const { voice, rate, pitch } = edgeVoiceFor(language, style);
-  const tts = new MsEdgeTTS({ connectionTimeoutMs: 10000, synthesisTimeoutMs: 18000 });
-  try {
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  const tts = new MsEdgeTTS({ connectionTimeoutMs: 8000, synthesisTimeoutMs: 15000 });
+  return tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3).then(() => {
     const { audioStream } = tts.toStream(text, { ...(rate ? { rate } : {}), ...(pitch ? { pitch } : {}) });
-    const chunks: Buffer[] = [];
-    for await (const chunk of audioStream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const audio = Buffer.concat(chunks);
-    if (!audio.length) throw new Error('Empty Edge-TTS audio stream');
-    return audio;
-  } finally {
-    tts.close();
-  }
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          let hasData = false;
+          for await (const chunk of audioStream) {
+            hasData = true;
+            controller.enqueue(Buffer.isBuffer(chunk) ? new Uint8Array(chunk) : new Uint8Array(Buffer.from(chunk)));
+          }
+          if (!hasData) throw new Error('Empty Edge-TTS audio stream');
+          controller.close();
+        } catch (err) {
+          controller.error(err);
+        } finally {
+          tts.close();
+        }
+      },
+      cancel() {
+        tts.close();
+      },
+    });
+  });
 }
 
 async function synthesizeElevenLabs(text: string, signal: AbortSignal): Promise<Response | null> {
@@ -73,7 +83,7 @@ async function synthesizeElevenLabs(text: string, signal: AbortSignal): Promise<
     },
     body: JSON.stringify({
       text,
-      model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
+      model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_flash_v2_5',
     }),
     signal,
   });
@@ -141,10 +151,10 @@ export async function POST(request: Request) {
       if (res) return res;
     }
 
-    // Default free cloud neural TTS via Microsoft Edge-TTS (no local tunnel needed)
+    // Default free cloud neural TTS via Microsoft Edge-TTS (streamed directly)
     try {
-      const audio = await synthesizeEdgeTts(input.text, input.language, input.style);
-      return new Response(new Uint8Array(audio), {
+      const stream = await synthesizeEdgeTtsStream(input.text, input.language, input.style);
+      return new Response(stream, {
         headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Voice-Provider': 'msedge-tts' },
       });
     } catch {
