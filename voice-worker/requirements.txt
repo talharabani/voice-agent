@@ -1,0 +1,6 @@
+livekit-agents>=1.2
+livekit-plugins-groq
+livekit-plugins-silero
+livekit-plugins-elevenlabs
+python-dotenv
+httpx
