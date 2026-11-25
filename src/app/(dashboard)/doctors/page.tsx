@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Stethoscope } from 'lucide-react';
+import { Plus, Pencil, Stethoscope, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,34 @@ export default function DoctorsPage() {
     setForm(doctor ? { ...doctor, photo_url: doctor.photo_url ?? '', languages: doctor.languages.join(', '), concern_keywords: doctor.concern_keywords.join(', ') } : empty);
     setOpen(true);
   }
+  function handlePhotoUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file (JPG, PNG, or WebP).');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const size = 320;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const minSide = Math.min(img.width, img.height);
+        const sx = (img.width - minSide) / 2;
+        const sy = (img.height - minSide) / 2;
+        ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        setForm(p => ({ ...p, photo_url: dataUrl }));
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  }
   async function save(event: React.FormEvent) {
     event.preventDefault(); setSaving(true);
     try {
@@ -50,7 +78,28 @@ export default function DoctorsPage() {
     {error && <p role="alert" className="mb-5 text-sm text-red-700">{error}</p>}
     {loading ? <p className="py-12 text-brand-muted">Loading your team...</p> : doctors.length ? <div className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">{doctors.map(doctor => <div key={doctor.id} className="space-y-2"><DoctorCard doctor={doctor} /><div className="flex items-center justify-between px-1 text-xs"><span className="text-brand-muted">{doctor.is_active ? 'Visible to patients' : 'Hidden from patients'}</span><Button variant="ghost" size="sm" onClick={() => edit(doctor)}><Pencil className="size-3.5" />Edit profile</Button></div></div>)}</div> : <div className="rounded-2xl border border-dashed border-brand-border p-12 text-center"><Stethoscope className="mx-auto mb-4 size-8 text-brand-teal" /><h2 className="font-display text-xl">Introduce your doctors</h2><p className="mx-auto mt-2 max-w-sm text-sm text-brand-muted">Their specialties, experience and availability will appear during patient calls.</p><Button className="mt-5" onClick={() => edit()}>Add your first doctor</Button></div>}
     <Dialog open={open} onOpenChange={value => { if (!saving) setOpen(value); }}><DialogContent showCloseButton={!saving} className="max-h-[90dvh] overflow-y-auto border-brand-border bg-brand-surface text-brand-text sm:max-w-2xl"><DialogTitle>{editing ? 'Edit doctor profile' : 'Add a doctor'}</DialogTitle><DialogDescription>Patients see these details. Availability is informational, not a live calendar.</DialogDescription><form onSubmit={save} className="grid gap-4 sm:grid-cols-2">
-      {([['name', 'Doctor name', 'Dr. ...'], ['specialty', 'Specialty', 'Dermatology'], ['qualifications', 'Qualifications', 'MBBS, FCPS'], ['availability', 'Clinic timings', 'Mon, Wed, Fri: 4-8 pm'], ['photo_url', 'Photo URL (HTTPS)', 'https://...'], ['languages', 'Spoken languages (comma separated)', 'English, Urdu']] as const).map(([key, label, placeholder]) => <div key={key} className="space-y-2"><Label htmlFor={`doctor-${key}`}>{label}</Label><Input id={`doctor-${key}`} required={key === 'name' || key === 'specialty'} value={form[key]} maxLength={key === 'photo_url' ? 2000 : 500} placeholder={placeholder} onChange={event => setForm(p => ({ ...p, [key]: event.target.value }))} /></div>)}
+      <div className="flex items-center gap-4 rounded-xl border border-brand-border bg-brand-bg/60 p-3 sm:col-span-2">
+        <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-brand-border bg-brand-teal/20 font-display text-lg">
+          {form.photo_url ? <img src={form.photo_url} alt="Doctor preview" className="size-full object-cover" /> : 'DR'}
+        </div>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <p className="text-xs font-medium">Doctor profile photo</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-brand-border bg-brand-surface px-3 py-1.5 text-xs font-medium hover:bg-brand-teal/15">
+              <Upload className="size-3.5" />
+              Upload photo
+              <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+            </label>
+            {form.photo_url && (
+              <button type="button" onClick={() => setForm(p => ({ ...p, photo_url: '' }))} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-brand-muted hover:text-brand-text">
+                <X className="size-3.5" />Remove
+              </button>
+            )}
+          </div>
+          <p className="text-[11px] text-brand-muted">Upload from computer/phone or paste an HTTPS image link below.</p>
+        </div>
+      </div>
+      {([['name', 'Doctor name', 'Dr. ...'], ['specialty', 'Specialty', 'Dermatology'], ['qualifications', 'Qualifications', 'MBBS, FCPS'], ['availability', 'Clinic timings & fee', 'Mon-Fri: 4-8 pm (Fee: Rs. 2,000)'], ['photo_url', 'Or Photo URL (HTTPS)', 'https://...'], ['languages', 'Spoken languages (comma separated)', 'English, Urdu']] as const).map(([key, label, placeholder]) => <div key={key} className="space-y-2"><Label htmlFor={`doctor-${key}`}>{label}</Label><Input id={`doctor-${key}`} required={key === 'name' || key === 'specialty'} value={form[key]} maxLength={key === 'photo_url' ? 250000 : 500} placeholder={placeholder} onChange={event => setForm(p => ({ ...p, [key]: event.target.value }))} /></div>)}
       <div className="space-y-2"><Label htmlFor="doctor-experience">Years of experience</Label><Input id="doctor-experience" required type="number" min={0} max={80} value={form.experience_years} onChange={event => setForm(p => ({ ...p, experience_years: Number(event.target.value) }))} /></div>
       <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={form.is_active} onChange={event => setForm(p => ({ ...p, is_active: event.target.checked }))} />Visible to patients</label>
       <div className="space-y-2 sm:col-span-2"><Label htmlFor="doctor-description">Doctor summary</Label><Textarea id="doctor-description" value={form.description} maxLength={2000} rows={4} placeholder="Clinical focus, services and professional background. Avoid unverified claims." onChange={event => setForm(p => ({ ...p, description: event.target.value }))} /></div>
