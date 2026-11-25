@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { apiErrorResponse, requireApiUser, ApiError } from '@/lib/api-helpers';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { loadClinicDirectory } from '@/lib/clinic-directory';
 
 export const maxDuration = 30;
 
@@ -22,25 +23,28 @@ export async function POST(request: Request) {
       throw new ApiError('Audio file is required', 422);
     }
 
+    let ownerUserId = '';
     if (typeof token === 'string' && token) {
       const { data, error } = await supabaseAdmin
         .from('agents')
-        .select('id')
+        .select('id, user_id')
         .eq('share_token', token)
         .eq('is_active', true)
         .maybeSingle();
       if (error) throw error;
       if (!data) throw new ApiError('Call not found', 404);
+      ownerUserId = data.user_id;
     } else if (typeof agentId === 'string' && agentId) {
       const user = await requireApiUser();
       const { data, error } = await supabaseAdmin
         .from('agents')
-        .select('id')
+        .select('id, user_id')
         .eq('id', agentId)
         .eq('user_id', user.id)
         .maybeSingle();
       if (error) throw error;
       if (!data) throw new ApiError('Agent not found', 404);
+      ownerUserId = data.user_id;
     } else {
       throw new ApiError('Missing token or agent_id', 422);
     }
@@ -49,12 +53,25 @@ export async function POST(request: Request) {
     const rate = checkRateLimit(`stt:${ip}:${String(token ?? agentId)}`, 60, 60000);
     if (!rate.allowed) throw new ApiError('Too many transcription requests.', 429);
 
+    const directory = await loadClinicDirectory(ownerUserId);
+    const doctorNames = directory.doctors.map((d) => d.name).join(', ');
+    const clinicName = directory.clinic?.clinic_name || 'Clinic';
+    const vocabPrompt = [
+      clinicName,
+      doctorNames ? `Doctors: ${doctorNames}` : '',
+      'whitening, acne, appointment, consultation, WhatsApp, Dr., 0300, timings, fees',
+    ]
+      .filter(Boolean)
+      .join('. ');
+
+    // Explicitly set language (default "ur" unless caller is in English) — never auto-detect
+    const langCode = typeof language === 'string' && language.startsWith('en') ? 'en' : 'ur';
+
     const groqForm = new FormData();
     groqForm.append('file', audio, 'speech.webm');
     groqForm.append('model', process.env.GROQ_WHISPER_MODEL || 'whisper-large-v3-turbo');
-    if (typeof language === 'string' && /^(ur|en|hi|pa)$/.test(language)) {
-      groqForm.append('language', language === 'pa' ? 'ur' : language);
-    }
+    groqForm.append('language', langCode);
+    groqForm.append('prompt', vocabPrompt.slice(0, 800));
 
     const upstream = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
@@ -68,7 +85,9 @@ export async function POST(request: Request) {
     }
 
     const result = (await upstream.json()) as { text?: string };
-    return NextResponse.json({ text: (result.text ?? '').trim() });
+    const text = (result.text ?? '').trim();
+    console.info('[STT]', { lang: langCode, text });
+    return NextResponse.json({ text, language: langCode });
   } catch (error) {
     return apiErrorResponse(error);
   }

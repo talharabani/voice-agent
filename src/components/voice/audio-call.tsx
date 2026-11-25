@@ -71,6 +71,9 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
   const [streamingReply, setStreamingReply] = useState('')
   const [copiedChat, setCopiedChat] = useState(false)
   const recognition = useRef<Recognition | null>(null)
+  const mediaRecorder = useRef<MediaRecorder | null>(null)
+  const whisperEnabled = useRef(true)
+  const vadState = useRef({ speaking: false, lastVoiceAt: 0, startedAt: 0 })
   const stream = useRef<MediaStream | null>(null)
   const request = useRef<AbortController | null>(null)
   const started = useRef(0)
@@ -128,6 +131,19 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
         } else {
           bargeFrames = 0
         }
+        if (phaseRef.current === 'listening' && !mute.current && mediaRecorder.current?.state === 'recording') {
+          const now = performance.now()
+          if (amplitude > 0.05) {
+            vadState.current.speaking = true
+            vadState.current.lastVoiceAt = now
+          } else if (vadState.current.speaking && now - vadState.current.lastVoiceAt > 850) {
+            vadState.current.speaking = false
+            mediaRecorder.current.stop()
+          } else if (now - vadState.current.startedAt > 15000 && vadState.current.speaking) {
+            vadState.current.speaking = false
+            mediaRecorder.current.stop()
+          }
+        }
         animationFrame.current = requestAnimationFrame(draw)
       }
       void context.resume().catch(() => {}); draw()
@@ -156,6 +172,13 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     const old = recognition.current
     recognition.current = null
     if (old) { old.onend = null; old.onresult = null; old.onerror = null; old.abort() }
+    const rec = mediaRecorder.current
+    mediaRecorder.current = null
+    if (rec && rec.state !== 'inactive') {
+      rec.ondataavailable = null
+      rec.onstop = null
+      try { rec.stop() } catch {}
+    }
   }
   function stopAudio() {
     stopRecognition()
@@ -322,6 +345,50 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     changePhase('listening')
     if (mute.current) return
     stopRecognition()
+
+    if (whisperEnabled.current && stream.current && typeof MediaRecorder !== 'undefined') {
+      try {
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+        const recorder = new MediaRecorder(stream.current, { mimeType })
+        const chunks: Blob[] = []
+        mediaRecorder.current = recorder
+        vadState.current = { speaking: false, lastVoiceAt: 0, startedAt: performance.now() }
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+        recorder.onstop = async () => {
+          if (!active.current || mute.current || phaseRef.current !== 'listening') return
+          const blob = new Blob(chunks, { type: mimeType })
+          if (blob.size < 1200) { listenRef.current(); return }
+          const form = new FormData()
+          form.append('audio', blob, 'speech.webm')
+          form.append('language', (inputOverrideRef.current || languageLocales[currentLanguage.current]).split('-')[0])
+          if (token) form.append('token', token)
+          else if (agentId) form.append('agent_id', agentId)
+          try {
+            const res = await fetch('/api/voice/transcribe', { method: 'POST', body: form })
+            if (res.status === 501) {
+              whisperEnabled.current = false
+              listenRef.current()
+              return
+            }
+            if (!res.ok) { listenRef.current(); return }
+            const data = (await res.json()) as { text?: string }
+            const spoken = (data.text || '').trim()
+            if (spoken && active.current && phaseRef.current === 'listening') {
+              void turnRef.current(spoken)
+            } else if (active.current && phaseRef.current === 'listening') {
+              listenRef.current()
+            }
+          } catch {
+            if (active.current && phaseRef.current === 'listening') listenRef.current()
+          }
+        }
+        recorder.start(250)
+        return
+      } catch {
+        whisperEnabled.current = false
+      }
+    }
+
     const Ctor = recognitionType()
     if (!Ctor) return
     const rec = new Ctor()
@@ -404,7 +471,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     window.speechSynthesis.resume()
     try {
       speaker.current ??= new Audio(); await primeSpeaker(speaker.current)
-      const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+      const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       if (!active.current || session !== generation.current) { media.getTracks().forEach(t => t.stop()); return }
       stream.current = media
       startMeter(media)
