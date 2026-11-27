@@ -1,7 +1,15 @@
-"use client";
-import { useParams } from "next/navigation";
+import { connection } from "next/server";
 import { AudioCall } from "@/components/voice/audio-call";
-export default function CallTestPage() {
-  const { id } = useParams<{ id: string }>();
-  return <AudioCall agentId={id} />;
+import { getServerVoiceMode } from "@/lib/voice/mode";
+
+export default async function CallTestPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  await connection();
+  const { id } = await params;
+  const voiceMode = getServerVoiceMode();
+
+  return <AudioCall agentId={id} mode={voiceMode} />;
 }

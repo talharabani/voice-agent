@@ -5,6 +5,8 @@ import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethos
 import { Button } from '@/components/ui/button'
 import { Waveform } from '@/components/voice/waveform'
 import { VoxaOrb3D } from '@/components/three/voxa-orb-3d'
+import { LiveKitCall } from '@/components/voice/livekit-call'
+import { getClientVoiceMode, type VoiceMode } from '@/lib/voice/mode'
 import { primeSpeaker, playOnlineSpeech, prepareSpeechAudio } from '@/lib/voice/online-playback'
 import { playBrowserSpeech } from '@/lib/voice/browser-playback'
 import { DoctorCard } from '@/components/voice/doctor-card'
@@ -28,7 +30,15 @@ function recognitionType() {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition
 }
 
-export function AudioCall({ agentId, token }: { agentId?: string; token?: string }) {
+export function AudioCall({ agentId, token, mode }: { agentId?: string; token?: string; mode?: VoiceMode }) {
+  const voiceMode = mode ?? getClientVoiceMode()
+  if (voiceMode === 'livekit') {
+    return <LiveKitCall agentId={agentId} token={token} />
+  }
+  return <LegacyAudioCall agentId={agentId} token={token} />
+}
+
+function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string }) {
   const [name, setName] = useState('')
   const [clinic, setClinic] = useState<{ clinic_name: string; address: string; phone: string; opening_hours: string } | null>(null)
   const [doctors, setDoctors] = useState<PublicDoctor[]>([])
@@ -463,6 +473,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
 
   async function startCall() {
     if (active.current || saving || previewing) return
+    console.log('[voice-call] Starting call — Mode: legacy', { agentId: agentId ?? null, hasToken: Boolean(token) })
     const session = ++generation.current
     active.current = true; mute.current = false; setMuted(false)
     history.current = []; setMessages([]); setStreamingReply(''); setError(''); setNote(''); setElapsed(0); setBookingDraft(null); setHighlighted([])
@@ -543,7 +554,7 @@ export function AudioCall({ agentId, token }: { agentId?: string; token?: string
     <section className="clinic-call-shell mx-auto w-full max-w-7xl text-brand-text">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-brand-border bg-brand-surface px-5 py-4 sm:px-7">
         <div className="flex items-center gap-3"><div className="flex size-11 items-center justify-center rounded-xl bg-brand-teal/20"><Stethoscope className="size-5" /></div><div><p className="font-display text-lg font-semibold">{clinic?.clinic_name || name || 'Clinic reception'}</p><p className="mt-0.5 font-data text-[10px] uppercase tracking-[.18em] text-brand-muted">Your care starts with a conversation</p></div></div>
-        <div className="flex items-center gap-2 rounded-full border border-brand-border bg-brand-surface-raised px-3 py-2 text-xs"><span className={`size-2 rounded-full ${inCall ? 'animate-pulse bg-brand-teal' : 'bg-brand-muted/50'}`} />{phase === 'connecting' ? 'Connecting to reception' : inCall ? 'Reception call connected' : 'Virtual reception'}</div>
+        <div className="flex flex-wrap items-center gap-2"><span data-voice-mode="legacy" className="rounded-full border border-brand-border bg-brand-surface-raised px-2.5 py-1.5 font-data text-[11px] font-medium text-brand-muted">Mode: legacy</span><div className="flex items-center gap-2 rounded-full border border-brand-border bg-brand-surface-raised px-3 py-2 text-xs"><span className={`size-2 rounded-full ${inCall ? 'animate-pulse bg-brand-teal' : 'bg-brand-muted/50'}`} />{phase === 'connecting' ? 'Connecting to reception' : inCall ? 'Reception call connected' : 'Virtual reception'}</div></div>
       </header>
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
         <div className="space-y-5 lg:sticky lg:top-6">

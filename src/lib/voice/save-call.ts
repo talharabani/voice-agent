@@ -6,6 +6,7 @@ import type { CallTurn } from "@/lib/voice/respond";
 import { readBookingDraft } from '@/lib/voice/booking-flow';
 import { loadClinicDirectory } from '@/lib/clinic-directory';
 import { sendAppointmentConfirmation, whatsappConfigured } from '@/lib/whatsapp';
+import { matchClinicDoctor, normalizeFreeTextRequestedTime } from '@/lib/voice/slot-utils';
 
 function normalizePhone(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -98,15 +99,24 @@ export async function saveCallRecord(input: SaveCallInput) {
 
   let appointment = null;
   if (booking.requested) {
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const targetPhone = booking.customer_phone ?? phone;
+    const clinicTimezone = directory.clinic?.timezone || 'Asia/Karachi';
+    const matchedDoctor = booking.requested_doctor
+      ? matchClinicDoctor(booking.requested_doctor, directory.doctors)
+      : null;
+    const canonicalDoctor = matchedDoctor && matchedDoctor.ok ? matchedDoctor.doctor : null;
+    const canonicalDoctorName = canonicalDoctor?.name ?? booking.requested_doctor;
+    const normalizedTime = normalizeFreeTextRequestedTime(booking.requested_time, clinicTimezone);
+
     const { data: existingAppt } = targetPhone
       ? await supabaseAdmin
           .from("appointments")
           .select("*")
-          .eq("agent_id", input.agentId)
+          .eq("user_id", input.userId)
           .eq("customer_phone", targetPhone)
-          .gte("created_at", tenMinAgo)
+          .neq("status", "cancelled")
+          .gte("created_at", thirtyMinAgo)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle()
@@ -122,20 +132,22 @@ export async function saveCallRecord(input: SaveCallInput) {
           agent_id: input.agentId,
           conversation_id: conversation.id,
           lead_id: lead?.id ?? null,
+          doctor_id: canonicalDoctor?.id ?? null,
+          doctor_name: canonicalDoctorName,
           customer_name: booking.customer_name ?? analysis.lead.name,
           customer_phone: targetPhone,
           customer_email: analysis.lead.email,
           service: booking.service,
-          requested_time: booking.requested_time,
-          requested_doctor: booking.requested_doctor,
+          requested_time: normalizedTime,
+          requested_doctor: canonicalDoctorName,
           patient_concern: booking.patient_concern,
           call_summary: [
             `Patient: ${booking.customer_name ?? analysis.lead.name ?? 'Not captured'}`,
             `Contact: ${targetPhone ?? 'Not captured'}`,
-            `Requested doctor: ${booking.requested_doctor ?? 'Clinic to assign'}`,
+            `Requested doctor: ${canonicalDoctorName ?? 'Clinic to assign'}`,
             `Patient-reported concern: ${booking.patient_concern ?? 'Not captured; review the call transcript'}`,
             `Service: ${booking.service ?? 'Not captured'}`,
-            `Preferred time: ${booking.requested_time ?? 'Not captured'}`,
+            `Preferred time: ${normalizedTime ?? 'Not captured'}`,
             `WhatsApp permission recorded: ${booking.whatsapp_consent ? 'Yes; verify in transcript' : 'Not recorded'}`,
             'Reception action: verify patient details, doctor and availability before confirming. This is a request, not a confirmed slot.',
           ].join('\n'),
