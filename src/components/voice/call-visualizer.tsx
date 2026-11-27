@@ -14,12 +14,13 @@ export type VisualizerMode =
   | 'muted'
   | 'ended';
 
-const DEFAULT_BAR_COUNT = 17;
+const DEFAULT_BAR_COUNT = 11;
 
 /**
- * Smooth, GPU-accelerated call audio visualizer that adapts cleanly across
- * every call state: connecting, ringing, customer speaking, agent speaking,
- * thinking, silence, and muted.
+ * Sleek, fluid pill-bar audio visualizer with distinct visual character per state:
+ * - Live multiband FFT bars when customer or agent is speaking (with live bands)
+ * - Smooth pure-CSS fluid waves for connecting, ringing, thinking, and calm silence
+ *   (no inline-transform vs CSS-keyframe fighting!)
  */
 export function CallVisualizer({
   mode,
@@ -30,55 +31,47 @@ export function CallVisualizer({
   bands?: number[];
   className?: string;
 }) {
-  const barCount = bands?.length || DEFAULT_BAR_COUNT;
-
-  const normalizedBars = useMemo(() => {
-    const center = (barCount - 1) / 2;
-    return Array.from({ length: barCount }, (_, i) => {
-      const dist = Math.abs(i - center) / Math.max(center, 1);
-      const arch = 1 - dist * 0.58; // Natural symmetric envelope
-
-      if (bands && bands.length === barCount && (mode === 'customer-speaking' || mode === 'agent-speaking')) {
-        const raw = Number.isFinite(bands[i]) ? Math.min(Math.max(bands[i], 0), 1) : 0;
-        // Lift subtle speech smoothly while keeping center bars slightly taller
-        return Math.min(1, Math.max(0.14, 0.16 + Math.pow(raw, 0.72) * 0.92 * (0.65 + arch * 0.45)));
-      }
-
-      if (mode === 'agent-speaking') {
-        return Math.min(1, 0.28 + arch * 0.62);
-      }
-      if (mode === 'customer-speaking') {
-        return Math.min(1, 0.24 + arch * 0.58);
-      }
-      if (mode === 'ringing' || mode === 'connecting') {
-        return 0.22 + arch * 0.34;
-      }
-      if (mode === 'thinking') {
-        return 0.2 + arch * 0.26;
-      }
-      if (mode === 'silence') {
-        return 0.14 + arch * 0.12;
-      }
-      return 0.12;
-    });
-  }, [bands, barCount, mode]);
-
   const isLiveReactive =
-    Boolean(bands && bands.length === barCount) &&
+    Boolean(bands && bands.length > 0) &&
     (mode === 'customer-speaking' || mode === 'agent-speaking');
+
+  // Downsample any incoming bands cleanly to 11 balanced bars
+  const liveBars = useMemo(() => {
+    if (!isLiveReactive || !bands || !bands.length) return null;
+    const count = DEFAULT_BAR_COUNT;
+    const center = (count - 1) / 2;
+    return Array.from({ length: count }, (_, i) => {
+      const srcIdx = Math.min(bands.length - 1, Math.floor((i / count) * bands.length));
+      const raw = Number.isFinite(bands[srcIdx]) ? Math.min(Math.max(bands[srcIdx], 0), 1) : 0;
+      const dist = Math.abs(i - center) / Math.max(center, 1);
+      const arch = 1 - dist * 0.42;
+      return Math.min(1, Math.max(0.18, 0.2 + Math.pow(raw, 0.7) * 0.85 * (0.65 + arch * 0.4)));
+    });
+  }, [bands, isLiveReactive]);
 
   const barColor =
     mode === 'customer-speaking'
-      ? 'bg-emerald-600'
+      ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.45)]'
       : mode === 'agent-speaking'
-        ? 'bg-brand-teal'
+        ? 'bg-[#4E8B63] shadow-[0_0_8px_rgba(78,139,99,0.4)]'
         : mode === 'ringing' || mode === 'connecting'
-          ? 'bg-amber-600/80'
+          ? 'bg-amber-500'
           : mode === 'thinking'
-            ? 'bg-brand-text/55'
+            ? 'bg-sky-600/80'
             : mode === 'muted' || mode === 'ended' || mode === 'idle'
               ? 'bg-brand-muted/35'
-              : 'bg-brand-teal/55';
+              : 'bg-brand-teal/70';
+
+  const pillSurface =
+    mode === 'customer-speaking'
+      ? 'border-emerald-500/30 bg-emerald-500/[0.07]'
+      : mode === 'agent-speaking'
+        ? 'border-brand-teal/40 bg-brand-teal/[0.1]'
+        : mode === 'ringing' || mode === 'connecting'
+          ? 'border-amber-500/35 bg-amber-500/[0.08]'
+          : mode === 'thinking'
+            ? 'border-sky-600/30 bg-sky-500/[0.07]'
+            : 'border-brand-border/80 bg-brand-surface-raised/85';
 
   const animClass = isLiveReactive
     ? ''
@@ -96,29 +89,42 @@ export function CallVisualizer({
                 ? 'call-viz-calm'
                 : '';
 
+  const center = (DEFAULT_BAR_COUNT - 1) / 2;
+
   return (
     <div
       className={cn(
-        'flex h-10 items-center justify-center gap-[4px] px-2',
+        'inline-flex h-10 items-center justify-center gap-[5px] rounded-full border px-4 backdrop-blur-xs transition-colors duration-300',
+        pillSurface,
         className
       )}
       aria-hidden="true"
     >
-      {normalizedBars.map((scale, i) => (
-        <span
-          key={i}
-          className={cn(
-            'w-[3.5px] rounded-full transition-[transform,background-color] duration-100 ease-out will-change-transform',
-            barColor,
-            animClass
-          )}
-          style={{
-            height: '36px',
-            transform: `scaleY(${scale.toFixed(3)})`,
-            animationDelay: `${(i * 0.055).toFixed(3)}s`,
-          }}
-        />
-      ))}
+      {Array.from({ length: DEFAULT_BAR_COUNT }, (_, i) => {
+        const dist = Math.abs(i - center) / Math.max(center, 1);
+        const maxBarPx = Math.round(24 - dist * 8); // Symmetric smooth pill arch (16px..24px)
+        const liveScale = liveBars ? liveBars[i] : null;
+        const staticScale = mode === 'idle' || mode === 'ended' || mode === 'muted' ? 0.28 : undefined;
+
+        return (
+          <span
+            key={i}
+            className={cn(
+              'w-[4px] rounded-full transition-[transform,background-color] duration-100 ease-out will-change-transform',
+              barColor,
+              animClass
+            )}
+            style={{
+              height: `${maxBarPx}px`,
+              ...(liveScale !== null
+                ? { transform: `scaleY(${liveScale.toFixed(3)})` }
+                : staticScale !== undefined
+                  ? { transform: `scaleY(${staticScale})` }
+                  : { animationDelay: `${(i * 0.08).toFixed(2)}s` }),
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

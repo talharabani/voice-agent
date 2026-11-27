@@ -240,16 +240,15 @@ export function LiveKitCall({ agentId, token }: { agentId?: string; token?: stri
             </h1>
 
             <div
-              data-phase={uiState === 'connecting' ? 'ringing' : uiState === 'ended' ? 'ended' : 'idle'}
-              className="voice-orbit clinic-orbit voice-light-scene my-7"
+              data-phase={uiState === 'connecting' ? 'connecting' : uiState === 'ended' ? 'ended' : 'idle'}
+              className="call-orb-stage my-6"
               aria-hidden="true"
             >
-              <span className="voice-aura" />
-              <span className="voice-light-rays" />
-              <span className="voice-light-halo" />
+              <span className="call-orb-glow" />
+              <span className="call-orb-ring" />
               {uiState === 'connecting' && (
                 <>
-                  <span className="call-connect-arc" />
+                  <span className="call-connect-arc call-connect-arc-amber" />
                   <span className="call-ring-ripple call-ring-ripple-amber" />
                   <span className="call-ring-ripple call-ring-ripple-amber call-ring-ripple-delay" />
                 </>
@@ -259,7 +258,7 @@ export function LiveKitCall({ agentId, token }: { agentId?: string; token?: stri
 
             <CallVisualizer mode={uiState === 'connecting' ? 'connecting' : uiState === 'ended' ? 'ended' : 'idle'} />
 
-            <p role="status" aria-live="polite" className="mt-3 flex items-center gap-2 text-base font-medium">
+            <p role="status" aria-live="polite" className="mt-4 flex items-center gap-2 text-base font-medium">
               {uiState === 'connecting' && <PhoneCall className="call-phone-ringing size-4 text-amber-600" />}
               {uiState === 'connecting'
                 ? 'Connecting to agent...'
@@ -520,21 +519,28 @@ function ActiveRoomView({
         </div>
 
         <div className="relative z-10 flex flex-col items-center py-4">
+          <div className="mb-1 text-center">
+            <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
+              Clinic Reception
+            </h1>
+            <p className="mt-1 font-data text-xs tabular-nums text-brand-muted">
+              {isAgentReady ? formatDuration(elapsed) : isRinging ? 'Ringing...' : 'Dialing...'}
+            </p>
+          </div>
+
           <div
             data-phase={scenePhase}
-            className="voice-orbit clinic-orbit voice-light-scene my-5"
+            className="call-orb-stage my-5"
             aria-hidden="true"
           >
-            <span className="voice-aura" />
-            <span className="voice-light-rays" />
-            <span className="voice-light-rays voice-light-rays-second" />
-            <span className="voice-light-halo" />
-            {(isConnecting || state === 'thinking') && <span className="call-connect-arc" />}
+            <span className="call-orb-glow" />
+            <span className="call-orb-ring" />
+            {isConnecting && <span className="call-connect-arc call-connect-arc-amber" />}
+            {state === 'thinking' && !isConnecting && !isRinging && <span className="call-connect-arc" />}
             {isRinging && (
               <>
                 <span className="call-ring-ripple call-ring-ripple-amber" />
                 <span className="call-ring-ripple call-ring-ripple-amber call-ring-ripple-delay" />
-                <span className="call-ring-ripple call-ring-ripple-amber call-ring-ripple-delay-2" />
               </>
             )}
             {vizMode === 'agent-speaking' && (
@@ -544,13 +550,11 @@ function ActiveRoomView({
               </>
             )}
             <CallOrb phase={orbPhase} muted={isMutedState} audioLevelRef={audioLevelRef} />
-            <span className="voice-spark voice-spark-one" />
-            <span className="voice-spark voice-spark-two" />
           </div>
 
-          <CallVisualizer mode={vizMode} bands={activeBands} className="mt-1" />
+          <CallVisualizer mode={vizMode} bands={activeBands} />
 
-          <p role="status" aria-live="polite" className="mt-3 text-base font-medium transition-opacity duration-200">
+          <p role="status" aria-live="polite" className="mt-4 text-base font-medium transition-opacity duration-200">
             {statusLabel}
           </p>
           <p className="mt-1 text-xs text-brand-muted">
@@ -564,40 +568,57 @@ function ActiveRoomView({
           </p>
         </div>
 
-        <div className="relative z-10 flex items-center justify-center gap-5">
-          <button
-            type="button"
-            onClick={toggleMute}
-            aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
-            aria-pressed={muted}
-            className={`flex size-14 items-center justify-center rounded-full border border-brand-border transition-all hover:scale-105 active:scale-95 ${
-              muted
-                ? 'bg-brand-text text-brand-bg'
-                : customerSpeaking
-                  ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-800 shadow-sm'
-                  : 'bg-brand-bg'
-            }`}
-          >
-            {muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
-          </button>
-          <button
-            type="button"
-            onClick={endCall}
-            aria-label="End call"
-            className="flex size-16 items-center justify-center rounded-full bg-[#B74434] text-white shadow-lg transition-transform hover:scale-105 hover:bg-[#9c382b] active:scale-95"
-          >
-            <PhoneOff className="size-6" />
-          </button>
-          <span
-            aria-label="Speaker active"
-            className={`flex size-14 items-center justify-center rounded-full border border-brand-border transition-colors ${
-              vizMode === 'agent-speaking'
-                ? 'border-brand-teal/60 bg-brand-teal/15 text-brand-text'
-                : 'bg-brand-bg text-brand-muted'
-            }`}
-          >
-            <Volume2 className={`size-5 ${vizMode === 'agent-speaking' ? 'animate-pulse' : ''}`} />
-          </span>
+        <div className="relative z-10 flex items-start justify-center gap-7 pt-2">
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              onClick={toggleMute}
+              aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
+              aria-pressed={muted}
+              className={`flex size-14 items-center justify-center rounded-full border shadow-xs transition-all hover:scale-105 active:scale-95 ${
+                muted
+                  ? 'border-brand-text bg-brand-text text-brand-bg'
+                  : customerSpeaking
+                    ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-800'
+                    : 'border-brand-border bg-brand-surface-raised text-brand-text hover:bg-brand-bg'
+              }`}
+            >
+              {muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
+            </button>
+            <span className="font-data text-[10px] uppercase tracking-wider text-brand-muted">
+              {muted ? 'Unmute' : 'Mute'}
+            </span>
+          </div>
+
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              onClick={endCall}
+              aria-label="End call"
+              className="flex size-16 items-center justify-center rounded-full bg-[#C23B2B] text-white shadow-lg shadow-[#C23B2B]/25 transition-transform hover:scale-105 hover:bg-[#a83123] active:scale-95"
+            >
+              <PhoneOff className="size-6" />
+            </button>
+            <span className="font-data text-[10px] uppercase tracking-wider text-brand-muted">
+              End
+            </span>
+          </div>
+
+          <div className="flex flex-col items-center gap-1.5">
+            <span
+              aria-label="Speaker active"
+              className={`flex size-14 items-center justify-center rounded-full border shadow-xs transition-colors ${
+                vizMode === 'agent-speaking'
+                  ? 'border-brand-teal/60 bg-brand-teal/15 text-brand-text'
+                  : 'border-brand-border bg-brand-surface-raised text-brand-muted'
+              }`}
+            >
+              <Volume2 className={`size-5 ${vizMode === 'agent-speaking' ? 'animate-pulse' : ''}`} />
+            </span>
+            <span className="font-data text-[10px] uppercase tracking-wider text-brand-muted">
+              Audio
+            </span>
+          </div>
         </div>
       </div>
 

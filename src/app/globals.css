@@ -192,17 +192,79 @@
 @keyframes voice-halo-breathe { 50% { opacity: .5; scale: 1.09; } }
 @keyframes voice-spark-drift { 50% { transform: translate(10px, -16px); opacity: .25; } }
 
-/* Active call phone-like animations: ringing ripples, connecting arc, live equalizer */
+/* Clean, refined active call stage & concentric halo animations */
+.call-orb-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 244px;
+  height: 244px;
+  border-radius: 9999px;
+  isolation: isolate;
+}
+.call-orb-glow {
+  position: absolute;
+  inset: -24px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(126, 155, 118, 0.28) 0%, rgba(126, 155, 118, 0.08) 46%, transparent 72%);
+  filter: blur(18px);
+  transition: background 0.5s ease, opacity 0.4s ease, transform 0.5s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.call-orb-stage[data-phase="ringing"] .call-orb-glow,
+.call-orb-stage[data-phase="connecting"] .call-orb-glow {
+  background: radial-gradient(circle, rgba(232, 166, 72, 0.34) 0%, rgba(232, 166, 72, 0.1) 48%, transparent 72%);
+}
+.call-orb-stage[data-phase="customer-speaking"] .call-orb-glow {
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.34) 0%, rgba(16, 185, 129, 0.1) 48%, transparent 72%);
+  transform: scale(1.06);
+}
+.call-orb-stage[data-phase="speaking"] .call-orb-glow {
+  background: radial-gradient(circle, rgba(111, 168, 124, 0.38) 0%, rgba(199, 223, 184, 0.14) 48%, transparent 74%);
+  transform: scale(1.08);
+}
+.call-orb-stage[data-phase="thinking"] .call-orb-glow {
+  background: radial-gradient(circle, rgba(83, 136, 166, 0.3) 0%, rgba(83, 136, 166, 0.08) 48%, transparent 72%);
+}
+.call-orb-stage[data-phase="muted"] .call-orb-glow,
+.call-orb-stage[data-phase="ended"] .call-orb-glow {
+  opacity: 0.35;
+}
+.call-orb-ring {
+  position: absolute;
+  inset: 4px;
+  border-radius: 9999px;
+  border: 1px solid rgba(22, 22, 19, 0.1);
+  transition: border-color 0.35s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+.call-orb-stage[data-phase="customer-speaking"] .call-orb-ring {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+.call-orb-stage[data-phase="speaking"] .call-orb-ring {
+  border-color: rgba(111, 168, 124, 0.4);
+}
+.call-orb-stage[data-phase="ringing"] .call-orb-ring,
+.call-orb-stage[data-phase="connecting"] .call-orb-ring {
+  border-color: rgba(217, 119, 6, 0.32);
+}
+.call-orb-stage[data-phase="thinking"] .call-orb-ring {
+  border-color: rgba(83, 136, 166, 0.3);
+}
+
 .call-ring-ripple {
   position: absolute;
-  inset: -6px;
+  inset: 4px;
   border-radius: 9999px;
-  border: 1.5px solid rgba(126, 155, 118, 0.55);
+  border: 1.5px solid rgba(111, 168, 124, 0.48);
   animation: call-ring-ripple 2.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
   pointer-events: none;
+  z-index: 1;
 }
 .call-ring-ripple-amber {
-  border-color: rgba(217, 119, 6, 0.48);
+  border-color: rgba(217, 119, 6, 0.45);
 }
 .call-ring-ripple-delay {
   animation-delay: 0.7s;
@@ -212,39 +274,44 @@
 }
 .call-connect-arc {
   position: absolute;
-  inset: -12px;
+  inset: 4px;
   border-radius: 9999px;
   border: 2px solid transparent;
-  border-top-color: rgba(126, 155, 118, 0.85);
-  border-right-color: rgba(126, 155, 118, 0.35);
-  animation: clinic-orbit 1.4s linear infinite;
+  border-top-color: rgba(83, 136, 166, 0.85);
+  border-right-color: rgba(83, 136, 166, 0.25);
+  animation: clinic-orbit 1.3s linear infinite;
   pointer-events: none;
+  z-index: 2;
+}
+.call-connect-arc-amber {
+  border-top-color: rgba(217, 119, 6, 0.85);
+  border-right-color: rgba(217, 119, 6, 0.25);
 }
 .call-phone-ringing {
   animation: call-phone-ring 1.8s ease-in-out infinite;
 }
 .call-viz-agent {
-  animation: call-viz-pulse 0.72s ease-in-out infinite alternate;
+  animation: call-viz-pulse 0.68s ease-in-out infinite alternate;
 }
 .call-viz-customer {
-  animation: call-viz-pulse 0.62s ease-in-out infinite alternate;
+  animation: call-viz-pulse 0.58s ease-in-out infinite alternate;
 }
 .call-viz-ringing {
   animation: call-viz-ring 1.9s ease-in-out infinite;
 }
 .call-viz-connecting {
-  animation: call-viz-connect 1.15s ease-in-out infinite;
+  animation: call-viz-connect 1.1s ease-in-out infinite;
 }
 .call-viz-thinking {
-  animation: call-viz-think 1.3s ease-in-out infinite;
+  animation: call-viz-think 1.2s ease-in-out infinite;
 }
 .call-viz-calm {
-  animation: call-viz-calm 3.2s ease-in-out infinite;
+  animation: call-viz-calm 2.8s ease-in-out infinite;
 }
 
 @keyframes call-ring-ripple {
-  0% { transform: scale(0.92); opacity: 0.75; }
-  100% { transform: scale(1.36); opacity: 0; }
+  0% { transform: scale(0.96); opacity: 0.72; }
+  100% { transform: scale(1.26); opacity: 0; }
 }
 @keyframes call-phone-ring {
   0%, 100% { transform: rotate(0deg); }
@@ -255,24 +322,24 @@
   40% { transform: rotate(0deg); }
 }
 @keyframes call-viz-pulse {
-  0% { transform: scaleY(0.24); }
-  100% { transform: scaleY(0.94); }
+  0% { transform: scaleY(0.28); }
+  100% { transform: scaleY(1); }
 }
 @keyframes call-viz-ring {
-  0%, 42%, 100% { transform: scaleY(0.16); opacity: 0.5; }
-  20% { transform: scaleY(0.72); opacity: 1; }
+  0%, 42%, 100% { transform: scaleY(0.26); opacity: 0.5; }
+  20% { transform: scaleY(0.92); opacity: 1; }
 }
 @keyframes call-viz-connect {
-  0%, 100% { transform: scaleY(0.18); opacity: 0.45; }
-  50% { transform: scaleY(0.68); opacity: 1; }
+  0%, 100% { transform: scaleY(0.28); opacity: 0.45; }
+  50% { transform: scaleY(0.88); opacity: 1; }
 }
 @keyframes call-viz-think {
-  0%, 100% { transform: scaleY(0.2); opacity: 0.45; }
-  50% { transform: scaleY(0.55); opacity: 0.95; }
+  0%, 100% { transform: scaleY(0.32); opacity: 0.48; }
+  50% { transform: scaleY(0.92); opacity: 1; }
 }
 @keyframes call-viz-calm {
-  0%, 100% { transform: scaleY(0.14); opacity: 0.65; }
-  50% { transform: scaleY(0.26); opacity: 0.9; }
+  0%, 100% { transform: scaleY(0.26); opacity: 0.55; }
+  50% { transform: scaleY(0.45); opacity: 0.9; }
 }
 
 @media (prefers-reduced-motion: reduce) {
