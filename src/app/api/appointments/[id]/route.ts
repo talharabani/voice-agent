@@ -5,8 +5,10 @@ import { ApiError, apiErrorResponse, requireApiUser } from "@/lib/api-helpers";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { sendAppointmentConfirmation } from "@/lib/whatsapp";
 
+import type { AppointmentModification, AppointmentRow } from "@/types/database";
+
 const updateAppointmentSchema = z.object({
-  status: z.enum(["requested", "confirmed", "completed", "cancelled"]).optional(),
+  status: z.enum(["requested", "pending", "confirmed", "rescheduled", "completed", "cancelled"]).optional(),
   scheduled_at: z.string().datetime({ offset: true }).nullable().optional(),
   notes: z.string().trim().max(5000).nullable().optional(),
   service: z.string().trim().max(200).nullable().optional(),
@@ -83,13 +85,79 @@ export async function PATCH(
       (changes.scheduled_at !== undefined || changes.customer_phone !== undefined || changes.service !== undefined || changes.doctor_id !== undefined)) {
       throw new ApiError('This confirmation has already been submitted. Contact the patient before changing its details.', 409);
     }
-    const { data, error } = await supabaseAdmin
+    const prevHistory: AppointmentModification[] = Array.isArray(existing.modification_history)
+      ? existing.modification_history
+      : [];
+    const nextDoctorName = doctorName ?? existing.doctor_name;
+    const nextScheduledAt = changes.scheduled_at !== undefined ? changes.scheduled_at : existing.scheduled_at;
+    const nextService = changes.service !== undefined ? changes.service : existing.service;
+    const nextStatus = finalStatus;
+    const hasAuditableChange =
+      nextDoctorName !== existing.doctor_name ||
+      nextScheduledAt !== existing.scheduled_at ||
+      nextService !== existing.service ||
+      nextStatus !== existing.status;
+
+    const historyEntry: AppointmentModification | null = hasAuditableChange
+      ? {
+          changed_at: new Date().toISOString(),
+          actor: "clinic_staff",
+          action:
+            nextStatus === "cancelled"
+              ? "cancelled"
+              : nextStatus === "confirmed" && existing.status !== "confirmed"
+                ? "confirmed"
+                : nextScheduledAt !== existing.scheduled_at && nextDoctorName === existing.doctor_name
+                  ? "rescheduled"
+                  : nextDoctorName !== existing.doctor_name && nextScheduledAt === existing.scheduled_at
+                    ? "doctor_changed"
+                    : "modified",
+          previous: {
+            doctor_name: existing.doctor_name || existing.requested_doctor,
+            doctor_id: existing.doctor_id,
+            service: existing.service,
+            requested_time: existing.requested_time,
+            scheduled_at: existing.scheduled_at,
+            status: existing.status,
+          },
+          updated: {
+            doctor_name: nextDoctorName,
+            doctor_id: changes.doctor_id ?? existing.doctor_id,
+            service: nextService,
+            requested_time: existing.requested_time,
+            scheduled_at: nextScheduledAt,
+            status: nextStatus,
+          },
+        }
+      : null;
+
+    const updateFields: Partial<AppointmentRow> = {
+      ...changes,
+      ...(doctorName ? { doctor_name: doctorName, doctor_id: changes.doctor_id ?? existing.doctor_id } : {}),
+      ...(historyEntry ? { modification_history: [...prevHistory, historyEntry] } : {}),
+      updated_at: new Date().toISOString(),
+    };
+
+    let { data, error } = await supabaseAdmin
       .from("appointments")
-      .update({ ...changes, ...(doctorName ? { doctor_name: doctorName, doctor_id: changes.doctor_id ?? existing.doctor_id } : {}), updated_at: new Date().toISOString() })
+      .update(updateFields)
       .eq("id", id)
       .eq("user_id", user.id)
       .select("*, agents(name)")
       .single();
+
+    if (error && (error.code === "42703" || error.code === "PGRST204")) {
+      const { modification_history: _mh, ...fallbackFields } = updateFields;
+      const fallback = await supabaseAdmin
+        .from("appointments")
+        .update(fallbackFields)
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .select("*, agents(name)")
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) throw error;
 

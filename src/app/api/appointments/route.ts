@@ -16,7 +16,7 @@ const createAppointmentSchema = z.object({
   service: z.string().trim().min(1, "Service is required").max(200),
   scheduled_at: z.string().datetime({ offset: true }),
   patient_concern: z.string().trim().max(500).optional().default(""),
-  status: z.enum(["requested", "confirmed"]).optional().default("confirmed"),
+  status: z.enum(["requested", "pending", "confirmed"]).optional().default("confirmed"),
   whatsapp_consent: z.boolean().optional().default(false),
 });
 

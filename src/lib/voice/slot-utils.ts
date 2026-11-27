@@ -282,13 +282,15 @@ export function validateSlotRequest({
 }
 
 export function checkSlotOverlap(
-  existingRows: Array<{ scheduled_at: string | null; requested_time: string | null }>,
+  existingRows: Array<{ id?: string; scheduled_at: string | null; requested_time: string | null }>,
   targetStartMs: number,
   slotMinutes: number,
-  timezone: string
+  timezone: string,
+  excludeAppointmentId?: string
 ): boolean {
   const windowMs = slotMinutes * 60_000;
   for (const row of existingRows) {
+    if (excludeAppointmentId && row.id === excludeAppointmentId) continue;
     let existingMs: number | null = null;
     if (row.scheduled_at) {
       const parsed = Date.parse(row.scheduled_at);
@@ -305,6 +307,63 @@ export function checkSlotOverlap(
     }
   }
   return false;
+}
+
+/**
+ * Compute actual free time slots (HH:MM 24h) on a specific YYYY-MM-DD date for a clinic doctor.
+ */
+export function findAvailableSlotsForDate({
+  date,
+  timezone,
+  clinicHours,
+  offDays,
+  doctorAvailability,
+  slotMinutes = DEFAULT_SLOT_MINUTES,
+  existingRows,
+  excludeAppointmentId,
+  maxSlots = 12,
+}: {
+  date: string;
+  timezone: string;
+  clinicHours?: string | null;
+  offDays?: string | null;
+  doctorAvailability?: string | null;
+  slotMinutes?: number;
+  existingRows: Array<{ id?: string; scheduled_at: string | null; requested_time: string | null }>;
+  excludeAppointmentId?: string;
+  maxSlots?: number;
+}): { ok: true; slots: string[] } | { ok: false; message: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+    return { ok: false, message: 'Please provide a valid date in YYYY-MM-DD format.' };
+  }
+
+  const weekdayIndex = new Date(
+    Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)))
+  ).getUTCDay();
+  const weekday = WEEKDAYS[weekdayIndex];
+  const offDayMatch = Boolean(offDays && new RegExp(`\\b${weekday}[a-z]*\\b`, 'i').test(offDays));
+  if (offDayMatch || isWeekdayClosed(weekday, clinicHours) || isWeekdayClosed(weekday, doctorAvailability)) {
+    return { ok: false, message: 'The clinic or doctor is closed on that day.' };
+  }
+
+  const { openMinutes, closeMinutes } = parseWorkingHours(doctorAvailability || clinicHours);
+  const nowMs = Date.now();
+  const slots: string[] = [];
+
+  for (let mins = openMinutes; mins + slotMinutes <= closeMinutes; mins += slotMinutes) {
+    const hh = String(Math.floor(mins / 60)).padStart(2, '0');
+    const mm = String(mins % 60).padStart(2, '0');
+    const timeStr = `${hh}:${mm}`;
+    const dt = zonedDateTimeToUtc(date.trim(), timeStr, timezone);
+    if (!dt || dt.getTime() <= nowMs) continue;
+    if (checkSlotOverlap(existingRows, dt.getTime(), slotMinutes, timezone, excludeAppointmentId)) {
+      continue;
+    }
+    slots.push(timeStr);
+    if (slots.length >= maxSlots) break;
+  }
+
+  return { ok: true, slots };
 }
 
 export function normalizeFreeTextRequestedTime(rawTime: string | null, timezone: string): string | null {

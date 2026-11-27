@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Calendar as CalendarIcon,
   CalendarCheck,
+  Check,
   ChevronLeft,
   ChevronRight,
   Clock,
+  Copy,
   Download,
   Filter,
+  History,
   LayoutGrid,
   List,
   MessageCircle,
@@ -148,7 +151,10 @@ function cardStyleForStatus(status: Appointment["status"], isSelected: boolean):
   switch (status) {
     case "confirmed":
       return "border-[#7E9B76]/70 bg-[#E6EFE2] text-brand-text hover:border-[#5B7760]";
+    case "rescheduled":
+      return "border-[#5D859B]/70 bg-[#E4EEF3] text-brand-text hover:border-[#3E6A82]";
     case "requested":
+    case "pending":
       return "border-[#C99B58]/70 bg-[#F7EEDB] text-brand-text hover:border-[#B5813A]";
     case "completed":
       return "border-[#6F968C]/60 bg-[#E4EFEA] text-brand-text hover:border-[#4F786E]";
@@ -182,6 +188,8 @@ export default function AppointmentsPage() {
   const [service, setService] = useState("");
   const [consent, setConsent] = useState(false);
   const [doctorId, setDoctorId] = useState("");
+  const [copiedRef, setCopiedRef] = useState<string | null>(null);
+  const [createdBanner, setCreatedBanner] = useState<{ referenceCode: string; patient: string; doctor: string; slot: string } | null>(null);
 
   // Create new manual appointment dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -255,6 +263,7 @@ export default function AppointmentsPage() {
       }
       if (q) {
         const hay = [
+          a.reference_code,
           a.customer_name,
           a.customer_phone,
           a.service,
@@ -400,8 +409,21 @@ export default function AppointmentsPage() {
         setSelectedDate(createdDate);
         setMiniMonth(new Date(createdDate.getFullYear(), createdDate.getMonth(), 1));
       }
+      if (data.appointment?.reference_code) {
+        setCreatedBanner({
+          referenceCode: data.appointment.reference_code,
+          patient: data.appointment.customer_name || "Patient",
+          doctor: data.appointment.doctor_name || "Doctor",
+          slot: data.appointment.requested_time || "",
+        });
+      }
       if (data.notificationError) toast.warning(data.notificationError);
-      else toast.success("Appointment scheduled");
+      else
+        toast.success(
+          data.appointment?.reference_code
+            ? `Appointment booked — Ref: ${data.appointment.reference_code}`
+            : "Appointment scheduled"
+        );
       setCreateOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not create appointment");
@@ -416,6 +438,7 @@ export default function AppointmentsPage() {
       return;
     }
     const headers = [
+      "Reference ID",
       "Patient",
       "Phone",
       "Doctor",
@@ -429,6 +452,7 @@ export default function AppointmentsPage() {
       `"${String(val ?? "").replace(/"/g, '""')}"`;
     const rows = filteredAppointments.map((a) =>
       [
+        a.reference_code,
         a.customer_name,
         a.customer_phone,
         a.doctor_name || a.requested_doctor,
@@ -476,8 +500,17 @@ export default function AppointmentsPage() {
     [doctors]
   );
 
-  const requestedCount = appointments.filter((a) => a.status === "requested").length;
+  const requestedCount = appointments.filter((a) => a.status === "requested" || a.status === "pending").length;
   const confirmedCount = appointments.filter((a) => a.status === "confirmed").length;
+  const rescheduledCount = appointments.filter((a) => a.status === "rescheduled").length;
+
+  function copyReference(code: string) {
+    void navigator.clipboard?.writeText(code).then(() => {
+      setCopiedRef(code);
+      toast.success(`Copied ${code}`);
+      setTimeout(() => setCopiedRef((prev) => (prev === code ? null : prev)), 1800);
+    });
+  }
 
   return (
     <div className="space-y-5 text-brand-text">
@@ -513,7 +546,9 @@ export default function AppointmentsPage() {
             >
               <option value="all">All statuses ({appointments.length})</option>
               <option value="requested">Requested ({requestedCount})</option>
+              <option value="pending">Pending</option>
               <option value="confirmed">Confirmed ({confirmedCount})</option>
+              <option value="rescheduled">Rescheduled ({rescheduledCount})</option>
               <option value="completed">Completed</option>
               <option value="cancelled">Cancelled</option>
             </select>
@@ -598,6 +633,51 @@ export default function AppointmentsPage() {
           </div>
         </div>
       </div>
+
+      {createdBanner && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#7E9B76]/60 bg-[#E6EFE2] px-5 py-3.5 text-sm text-brand-text"
+        >
+          <div className="space-y-0.5">
+            <p className="font-medium">
+              Appointment confirmed — Reference ID:{" "}
+              <span className="rounded-md bg-brand-surface px-2 py-0.5 font-data text-xs font-semibold text-[#3F5D45]">
+                {createdBanner.referenceCode}
+              </span>
+            </p>
+            <p className="text-xs text-brand-muted">
+              {createdBanner.patient} · {createdBanner.doctor}
+              {createdBanner.slot ? ` · ${createdBanner.slot}` : ""}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => copyReference(createdBanner.referenceCode)}
+            >
+              {copiedRef === createdBanner.referenceCode ? (
+                <Check className="size-3.5" />
+              ) : (
+                <Copy className="size-3.5" />
+              )}
+              Copy ID
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-7"
+              onClick={() => setCreatedBanner(null)}
+              aria-label="Dismiss confirmation"
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
@@ -824,7 +904,7 @@ export default function AppointmentsPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-brand-border bg-brand-bg/70 p-1">
-              {(["all", "requested", "confirmed", "completed"] as const).map((st) => (
+              {(["all", "requested", "confirmed", "rescheduled", "completed"] as const).map((st) => (
                 <button
                   key={st}
                   type="button"
@@ -1002,9 +1082,20 @@ export default function AppointmentsPage() {
                                 isSelected
                               )}`}
                             >
-                              <p className="truncate text-xs font-semibold leading-tight">
-                                {appt.service || appt.customer_name || "Clinic Visit"}
-                              </p>
+                              <div className="flex items-center justify-between gap-1">
+                                <p className="truncate text-xs font-semibold leading-tight">
+                                  {appt.service || appt.customer_name || "Clinic Visit"}
+                                </p>
+                                {appt.reference_code && (
+                                  <span
+                                    className={`shrink-0 font-data text-[9px] ${
+                                      isSelected ? "text-[#F8F4E9]/85" : "text-[#4A6850]"
+                                    }`}
+                                  >
+                                    {appt.reference_code.replace(/^APT-\d{4}-/, "#")}
+                                  </span>
+                                )}
+                              </div>
                               <p
                                 className={`truncate font-data text-[10px] ${
                                   isSelected ? "text-[#F8F4E9]/85" : "text-brand-muted"
@@ -1064,6 +1155,21 @@ export default function AppointmentsPage() {
                   >
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        {appointment.reference_code && (
+                          <button
+                            type="button"
+                            onClick={() => copyReference(appointment.reference_code!)}
+                            className="inline-flex items-center gap-1 rounded-md border border-brand-border bg-brand-bg px-2 py-0.5 font-data text-[11px] font-medium text-[#4A6850] hover:bg-brand-surface-raised"
+                            title="Copy appointment reference number"
+                          >
+                            {appointment.reference_code}
+                            {copiedRef === appointment.reference_code ? (
+                              <Check className="size-3" />
+                            ) : (
+                              <Copy className="size-3" />
+                            )}
+                          </button>
+                        )}
                         <h3 className="font-display text-base font-semibold text-brand-text">
                           {appointment.customer_name || "Unknown caller"}
                         </h3>
@@ -1071,7 +1177,7 @@ export default function AppointmentsPage() {
                           variant={
                             appointment.status === "cancelled"
                               ? "destructive"
-                              : appointment.status === "confirmed"
+                              : appointment.status === "confirmed" || appointment.status === "rescheduled"
                                 ? "default"
                                 : "secondary"
                           }
@@ -1132,9 +1238,25 @@ export default function AppointmentsPage() {
                 <DialogTitle className="font-display text-xl font-semibold">
                   Edit Schedule
                 </DialogTitle>
-                <DialogDescription className="mt-0.5 text-xs">
-                  {selected.customer_name || "Patient"} ·{" "}
-                  {selected.agents?.name ?? "Voice receptionist"}
+                <DialogDescription className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                  <span>
+                    {selected.customer_name || "Patient"} ·{" "}
+                    {selected.agents?.name ?? "Voice receptionist"}
+                  </span>
+                  {selected.reference_code && (
+                    <button
+                      type="button"
+                      onClick={() => copyReference(selected.reference_code!)}
+                      className="inline-flex items-center gap-1 rounded-md border border-brand-border bg-brand-bg px-2 py-0.5 font-data text-[11px] font-semibold text-[#4A6850]"
+                    >
+                      {selected.reference_code}
+                      {copiedRef === selected.reference_code ? (
+                        <Check className="size-3" />
+                      ) : (
+                        <Copy className="size-3" />
+                      )}
+                    </button>
+                  )}
                 </DialogDescription>
               </div>
               <Badge
@@ -1272,6 +1394,30 @@ export default function AppointmentsPage() {
                   </Button>
                 </div>
               </div>
+
+              {Array.isArray(selected.modification_history) && selected.modification_history.length > 0 && (
+                <div className="rounded-xl border border-brand-border bg-brand-bg/60 p-3 text-xs">
+                  <p className="mb-2 flex items-center gap-1.5 font-data text-[10px] font-semibold uppercase tracking-wider text-brand-muted">
+                    <History className="size-3.5 text-[#5B7760]" />
+                    Modification history ({selected.modification_history.length})
+                  </p>
+                  <div className="max-h-36 space-y-2 overflow-y-auto">
+                    {selected.modification_history.map((entry, idx) => (
+                      <div key={idx} className="rounded-lg border border-brand-border/70 bg-brand-surface px-2.5 py-2">
+                        <div className="flex items-center justify-between gap-2 font-data text-[10px] text-brand-muted">
+                          <span className="uppercase">{entry.action.replaceAll("_", " ")} ({entry.actor.replaceAll("_", " ")})</span>
+                          <span>{new Date(entry.changed_at).toLocaleString()}</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-brand-text">
+                          {entry.previous?.doctor_name || "—"} @ {entry.previous?.requested_time || "—"} →{" "}
+                          <strong>{entry.updated?.doctor_name || "—"} @ {entry.updated?.requested_time || "—"}</strong>{" "}
+                          ({entry.updated?.status})
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-brand-bg/70 px-3 py-2 text-xs">
                 <span className="flex items-center gap-1.5 text-brand-muted">

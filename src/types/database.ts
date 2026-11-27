@@ -56,10 +56,35 @@ export type LeadRow = {
   created_at: string;
 };
 
-export type AppointmentStatus = "requested" | "confirmed" | "completed" | "cancelled";
+export type AppointmentStatus =
+  | "requested"
+  | "pending"
+  | "confirmed"
+  | "rescheduled"
+  | "completed"
+  | "cancelled";
+
+export type AppointmentSnapshot = {
+  doctor_name?: string | null;
+  doctor_id?: string | null;
+  service?: string | null;
+  requested_time?: string | null;
+  scheduled_at?: string | null;
+  status?: AppointmentStatus | string | null;
+};
+
+export type AppointmentModification = {
+  changed_at: string;
+  actor: "voice_agent" | "clinic_staff";
+  action: "rescheduled" | "doctor_changed" | "service_changed" | "modified" | "cancelled" | "confirmed";
+  previous: AppointmentSnapshot;
+  updated: AppointmentSnapshot;
+  note?: string | null;
+};
 
 export type AppointmentRow = {
   id: string;
+  reference_code?: string | null;
   user_id: string;
   agent_id: string;
   conversation_id: string | null;
@@ -72,6 +97,7 @@ export type AppointmentRow = {
   scheduled_at: string | null;
   status: AppointmentStatus;
   notes: string | null;
+  modification_history?: AppointmentModification[];
   created_at: string;
   updated_at: string;
   whatsapp_consent: boolean;
