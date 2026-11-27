@@ -192,6 +192,17 @@
 @keyframes voice-halo-breathe { 50% { opacity: .5; scale: 1.09; } }
 @keyframes voice-spark-drift { 50% { transform: translate(10px, -16px); opacity: .25; } }
 
+/* Subtle diagonal hatch pattern for calendar break/off-hours rows */
+.calendar-hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(218, 211, 191, 0.24),
+    rgba(218, 211, 191, 0.24) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
 /* Serene cloud orb fallback when WebGL is unavailable */
 .cloud-orb-fallback {
   background:
