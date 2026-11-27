@@ -183,8 +183,104 @@
 .voice-light-scene[data-phase="thinking"] .voice-light-rays { animation-duration: 6s; opacity: .7; }
 .voice-light-scene[data-phase="muted"] .voice-aura, .voice-light-scene[data-phase="ended"] .voice-aura { opacity: .2; }
 .voice-light-scene[data-phase="muted"] .voice-light-rays, .voice-light-scene[data-phase="ended"] .voice-light-rays { opacity: .15; }
+.voice-light-scene[data-phase="ringing"] .voice-aura { opacity: .88; animation-duration: 9s; }
+.voice-light-scene[data-phase="ringing"] .voice-light-halo { border-color: #d9770680; animation: voice-halo-breathe 1.8s ease-in-out infinite; }
+.voice-light-scene[data-phase="customer-speaking"] .voice-aura { opacity: .95; animation-duration: 10s; }
+.voice-light-scene[data-phase="customer-speaking"] .voice-light-halo { border-color: #05966999; box-shadow: 0 0 28px #05966930, inset 0 0 18px #10b98126; }
 @keyframes voice-aurora-spin { to { transform: rotate(360deg); } }
 @keyframes voice-orb-flow { from { transform: rotate(-30deg) translate(-3%, 2%); } to { transform: rotate(150deg) translate(5%, -3%); } }
 @keyframes voice-halo-breathe { 50% { opacity: .5; scale: 1.09; } }
 @keyframes voice-spark-drift { 50% { transform: translate(10px, -16px); opacity: .25; } }
-@media (prefers-reduced-motion: reduce) { .voice-light-scene *, .voice-light-scene .voice-orb { animation: none !important; transition: none !important; } }
+
+/* Active call phone-like animations: ringing ripples, connecting arc, live equalizer */
+.call-ring-ripple {
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  border: 1.5px solid rgba(126, 155, 118, 0.55);
+  animation: call-ring-ripple 2.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  pointer-events: none;
+}
+.call-ring-ripple-amber {
+  border-color: rgba(217, 119, 6, 0.48);
+}
+.call-ring-ripple-delay {
+  animation-delay: 0.7s;
+}
+.call-ring-ripple-delay-2 {
+  animation-delay: 1.4s;
+}
+.call-connect-arc {
+  position: absolute;
+  inset: -12px;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  border-top-color: rgba(126, 155, 118, 0.85);
+  border-right-color: rgba(126, 155, 118, 0.35);
+  animation: clinic-orbit 1.4s linear infinite;
+  pointer-events: none;
+}
+.call-phone-ringing {
+  animation: call-phone-ring 1.8s ease-in-out infinite;
+}
+.call-viz-agent {
+  animation: call-viz-pulse 0.72s ease-in-out infinite alternate;
+}
+.call-viz-customer {
+  animation: call-viz-pulse 0.62s ease-in-out infinite alternate;
+}
+.call-viz-ringing {
+  animation: call-viz-ring 1.9s ease-in-out infinite;
+}
+.call-viz-connecting {
+  animation: call-viz-connect 1.15s ease-in-out infinite;
+}
+.call-viz-thinking {
+  animation: call-viz-think 1.3s ease-in-out infinite;
+}
+.call-viz-calm {
+  animation: call-viz-calm 3.2s ease-in-out infinite;
+}
+
+@keyframes call-ring-ripple {
+  0% { transform: scale(0.92); opacity: 0.75; }
+  100% { transform: scale(1.36); opacity: 0; }
+}
+@keyframes call-phone-ring {
+  0%, 100% { transform: rotate(0deg); }
+  8% { transform: rotate(-14deg); }
+  16% { transform: rotate(14deg); }
+  24% { transform: rotate(-10deg); }
+  32% { transform: rotate(10deg); }
+  40% { transform: rotate(0deg); }
+}
+@keyframes call-viz-pulse {
+  0% { transform: scaleY(0.24); }
+  100% { transform: scaleY(0.94); }
+}
+@keyframes call-viz-ring {
+  0%, 42%, 100% { transform: scaleY(0.16); opacity: 0.5; }
+  20% { transform: scaleY(0.72); opacity: 1; }
+}
+@keyframes call-viz-connect {
+  0%, 100% { transform: scaleY(0.18); opacity: 0.45; }
+  50% { transform: scaleY(0.68); opacity: 1; }
+}
+@keyframes call-viz-think {
+  0%, 100% { transform: scaleY(0.2); opacity: 0.45; }
+  50% { transform: scaleY(0.55); opacity: 0.95; }
+}
+@keyframes call-viz-calm {
+  0%, 100% { transform: scaleY(0.14); opacity: 0.65; }
+  50% { transform: scaleY(0.26); opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-light-scene *, .voice-light-scene .voice-orb,
+  .call-ring-ripple, .call-connect-arc, .call-phone-ringing,
+  .call-viz-agent, .call-viz-customer, .call-viz-ringing,
+  .call-viz-connecting, .call-viz-thinking, .call-viz-calm {
+    animation: none !important;
+    transition: none !important;
+  }
+}

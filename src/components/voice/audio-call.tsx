@@ -1,11 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Phone, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethoscope, ShieldCheck } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { Mic, MicOff, Phone, PhoneCall, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethoscope, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Waveform } from '@/components/voice/waveform'
-import { VoxaOrb3D } from '@/components/three/voxa-orb-3d'
-import { LiveKitCall } from '@/components/voice/livekit-call'
+import { CallOrb } from '@/components/voice/call-orb'
+import { CallVisualizer, type VisualizerMode } from '@/components/voice/call-visualizer'
+import type { OrbPhase } from '@/components/three/voxa-orb-3d'
+import { createCallRingtone, type CallRingtone } from '@/lib/voice/ringtone'
 import { getClientVoiceMode, type VoiceMode } from '@/lib/voice/mode'
 import { primeSpeaker, playOnlineSpeech, prepareSpeechAudio } from '@/lib/voice/online-playback'
 import { playBrowserSpeech } from '@/lib/voice/browser-playback'
@@ -29,6 +32,36 @@ function recognitionType() {
   const w = window as unknown as { SpeechRecognition?: RecognitionConstructor; webkitSpeechRecognition?: RecognitionConstructor }
   return w.SpeechRecognition ?? w.webkitSpeechRecognition
 }
+
+const LiveKitCall = dynamic(
+  () => import('@/components/voice/livekit-call').then((mod) => mod.LiveKitCall),
+  {
+    ssr: false,
+    loading: () => (
+      <section className="clinic-call-shell mx-auto w-full max-w-4xl text-brand-text">
+        <div className="mb-6 flex h-[76px] items-center justify-between rounded-2xl border border-brand-border bg-brand-surface px-5 sm:px-7">
+          <div className="flex items-center gap-3">
+            <div className="size-11 animate-pulse rounded-xl bg-brand-teal/20" />
+            <div className="space-y-2">
+              <div className="h-4 w-44 animate-pulse rounded bg-brand-border/70" />
+              <div className="h-2.5 w-32 animate-pulse rounded bg-brand-border/50" />
+            </div>
+          </div>
+          <span
+            data-voice-mode="livekit"
+            className="rounded-full border border-brand-border bg-brand-surface-raised px-2.5 py-1.5 font-data text-[11px] font-medium text-brand-muted"
+          >
+            Mode: livekit
+          </span>
+        </div>
+        <div className="clinic-voice-room flex min-h-[540px] flex-col items-center justify-center rounded-[2rem] border border-brand-border bg-brand-surface p-8 text-center">
+          <div className="voice-orb animate-pulse" aria-hidden="true" />
+          <p className="mt-6 text-sm text-brand-muted">Preparing live voice studio...</p>
+        </div>
+      </section>
+    ),
+  }
+)
 
 export function AudioCall({ agentId, token, mode }: { agentId?: string; token?: string; mode?: VoiceMode }) {
   const voiceMode = mode ?? getClientVoiceMode()
@@ -64,6 +97,11 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
   const requestStarted = useRef(0)
   const [responseTime, setResponseTime] = useState<number | null>(null)
   const orbRef = useRef<HTMLDivElement>(null)
+  const audioLevelRef = useRef(0)
+  const ringtoneRef = useRef<CallRingtone | null>(null)
+  const [customerSpeaking, setCustomerSpeaking] = useState(false)
+  const customerSpeakingRef = useRef(false)
+  const lastCustomerVoiceAt = useRef(0)
   const audioContext = useRef<AudioContext | null>(null)
   const animationFrame = useRef(0)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -127,11 +165,28 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
       const draw = () => {
         analyser.getByteFrequencyData(samples)
         const amplitude = mute.current ? 0 : samples.reduce((sum, n) => sum + n, 0) / samples.length / 255
+        audioLevelRef.current = amplitude
         orbRef.current?.style.setProperty('--mic-level', String(amplitude))
+        const nowTs = performance.now()
+        if (phaseRef.current === 'listening' && !mute.current) {
+          if (amplitude > 0.055) {
+            lastCustomerVoiceAt.current = nowTs
+            if (!customerSpeakingRef.current) {
+              customerSpeakingRef.current = true
+              setCustomerSpeaking(true)
+            }
+          } else if (customerSpeakingRef.current && nowTs - lastCustomerVoiceAt.current > 300) {
+            customerSpeakingRef.current = false
+            setCustomerSpeaking(false)
+          }
+        } else if (customerSpeakingRef.current) {
+          customerSpeakingRef.current = false
+          setCustomerSpeaking(false)
+        }
         if (phaseRef.current === 'speaking' && !mute.current) {
           if (amplitude > 0.22) {
             bargeFrames++
-            if (bargeFrames >= 10) {
+            if (bargeFrames >= 7) {
               bargeFrames = 0
               interruptRef.current()
             }
@@ -142,11 +197,11 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
           bargeFrames = 0
         }
         if (phaseRef.current === 'listening' && !mute.current && mediaRecorder.current?.state === 'recording') {
-          const now = performance.now()
+          const now = nowTs
           if (amplitude > 0.05) {
             vadState.current.speaking = true
             vadState.current.lastVoiceAt = now
-          } else if (vadState.current.speaking && now - vadState.current.lastVoiceAt > 850) {
+          } else if (vadState.current.speaking && now - vadState.current.lastVoiceAt > 650) {
             vadState.current.speaking = false
             mediaRecorder.current.stop()
           } else if (now - vadState.current.startedAt > 15000 && vadState.current.speaking) {
@@ -191,7 +246,13 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
     }
   }
   function stopAudio() {
+    ringtoneRef.current?.stop({ playChime: false })
     stopRecognition()
+    audioLevelRef.current = 0
+    if (customerSpeakingRef.current) {
+      customerSpeakingRef.current = false
+      setCustomerSpeaking(false)
+    }
     window.speechSynthesis?.cancel()
     finishSpeech.current?.()
     speaker.current?.pause()
@@ -237,6 +298,7 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
   return () => {
       cancelled = true; active.current = false; generation.current++
       request.current?.abort(); stopAudio()
+      ringtoneRef.current?.dispose(); ringtoneRef.current = null
     }
     // The resource changes only when navigating to another agent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -308,6 +370,7 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
       setAudioProblem(false)
       if (!track) setPreviewAudible(true)
       if (track) {
+        ringtoneRef.current?.stop({ playChime: true })
         pendingSpoken.current += (pendingSpoken.current ? ' ' : '') + text
         setStreamingReply(pendingSpoken.current)
         changePhase('speaking')
@@ -352,6 +415,7 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
 
   listenRef.current = () => {
     if (!active.current) return
+    ringtoneRef.current?.stop({ playChime: false })
     changePhase('listening')
     if (mute.current) return
     stopRecognition()
@@ -426,7 +490,7 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
         return
       }
       if (interimText) {
-        silenceTimer = setTimeout(() => commitSpeech(interimText), 950)
+        silenceTimer = setTimeout(() => commitSpeech(interimText), 750)
       }
     }
     rec.onerror = event => {
@@ -478,6 +542,9 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
     active.current = true; mute.current = false; setMuted(false)
     history.current = []; setMessages([]); setStreamingReply(''); setError(''); setNote(''); setElapsed(0); setBookingDraft(null); setHighlighted([])
     started.current = Date.now(); changePhase('connecting')
+    // Start realistic phone ringtone immediately inside the user click gesture
+    ringtoneRef.current ??= createCallRingtone()
+    ringtoneRef.current.start()
     // Prime speech synthesis during the user gesture for mobile browsers.
     window.speechSynthesis.resume()
     try {
@@ -531,7 +598,54 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
   interruptRef.current = interrupt
 
   const inCall = phase !== 'idle' && phase !== 'ended'
-  const label = phase === 'listening' && muted ? 'Microphone muted' : ({ idle: 'A conversation, just a call away.', connecting: 'Connecting your call', listening: 'Listening to you', thinking: 'One moment', buffering: 'Preparing speaker audio', speaking: `${name || 'Your agent'} is speaking`, ended: 'Call ended' })[phase]
+  const label =
+    phase === 'listening' && muted
+      ? 'Microphone muted'
+      : phase === 'listening' && customerSpeaking
+        ? 'You are speaking'
+        : ({
+            idle: 'A conversation, just a call away.',
+            connecting: 'Connecting to agent...',
+            listening: 'Connected — speak naturally',
+            thinking: 'Agent is thinking...',
+            buffering: 'Connecting to agent...',
+            speaking: `${name || 'Your agent'} is speaking`,
+            ended: 'Call ended',
+          })[phase]
+  const legacyOrbPhase: OrbPhase =
+    previewAudible || phase === 'speaking'
+      ? 'speaking'
+      : phase === 'connecting'
+        ? 'ringing'
+        : phase === 'listening' && customerSpeaking && !muted
+          ? 'customer-speaking'
+          : phase
+  const legacyVizMode: VisualizerMode =
+    previewAudible || phase === 'speaking'
+      ? 'agent-speaking'
+      : phase === 'connecting'
+        ? 'ringing'
+        : phase === 'buffering' || phase === 'thinking'
+          ? 'thinking'
+          : phase === 'listening' && muted
+            ? 'muted'
+            : phase === 'listening' && customerSpeaking
+              ? 'customer-speaking'
+              : phase === 'listening'
+                ? 'silence'
+                : phase === 'ended'
+                  ? 'ended'
+                  : 'idle'
+  const legacyScenePhase =
+    previewAudible || phase === 'speaking'
+      ? 'speaking'
+      : phase === 'connecting'
+        ? 'ringing'
+        : muted && phase === 'listening'
+          ? 'muted'
+          : customerSpeaking && phase === 'listening'
+            ? 'customer-speaking'
+            : phase
 
   const selection = selectBrowserVoice(voices, language, preset, voiceUri)
   const orderedDoctors = [...doctors].sort((a, b) => Number(highlighted.includes(b.id)) - Number(highlighted.includes(a.id)))
@@ -561,8 +675,9 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
           <div className="clinic-voice-room relative flex min-h-[590px] flex-col items-center justify-between overflow-hidden rounded-[2rem] border border-brand-border bg-brand-surface p-6 text-center sm:p-8">
             <div className="relative z-10 flex w-full items-center justify-between"><span className="flex items-center gap-2 font-data text-[10px] uppercase tracking-[.18em]"><Waveform />VOXA / Care line</span><span className="flex items-center gap-1.5 text-xs text-brand-muted"><ShieldCheck className="size-3.5" />Clinic receptionist</span></div>
             <div className="relative z-10 flex flex-col items-center py-6"><p className="font-data text-[10px] uppercase tracking-[.24em] text-brand-muted">A familiar voice. A little more care.</p><h1 className="mt-3 font-display text-3xl tracking-tight sm:text-4xl">{name || 'Connecting...'}</h1>
-              <div ref={orbRef} data-phase={previewAudible ? 'speaking' : muted && phase === 'listening' ? 'muted' : phase} className={`voice-orbit clinic-orbit voice-light-scene my-8 ${phase === 'speaking' || previewAudible ? 'voice-speaking' : phase === 'listening' && !muted ? 'voice-listening' : ''}`} aria-hidden="true"><span className="voice-aura" /><span className="voice-light-rays" /><span className="voice-light-rays voice-light-rays-second" /><span className="voice-light-halo" /><span className="clinic-orbit-ring" /><VoxaOrb3D phase={phase} muted={muted} previewAudible={previewAudible} /><span className="clinic-orbit-dot" /><span className="voice-spark voice-spark-one" /><span className="voice-spark voice-spark-two" /><span className="voice-spark voice-spark-three" /></div>
-              <p role="status" aria-live="polite" className="text-base">{previewAudible ? 'Voice preview playing' : label}</p><p className="mt-2 font-data text-xs tabular-nums text-brand-muted">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</p>
+              <div ref={orbRef} data-phase={legacyScenePhase} className={`voice-orbit clinic-orbit voice-light-scene my-7 ${phase === 'speaking' || previewAudible ? 'voice-speaking' : phase === 'listening' && !muted ? 'voice-listening' : ''}`} aria-hidden="true"><span className="voice-aura" /><span className="voice-light-rays" /><span className="voice-light-rays voice-light-rays-second" /><span className="voice-light-halo" /><span className="clinic-orbit-ring" />{phase === 'connecting' && <><span className="call-connect-arc" /><span className="call-ring-ripple call-ring-ripple-amber" /><span className="call-ring-ripple call-ring-ripple-amber call-ring-ripple-delay" /></>}{(phase === 'speaking' || previewAudible) && <><span className="call-ring-ripple" /><span className="call-ring-ripple call-ring-ripple-delay" /></>}<CallOrb phase={legacyOrbPhase} muted={muted} previewAudible={previewAudible} audioLevelRef={audioLevelRef} /><span className="clinic-orbit-dot" /><span className="voice-spark voice-spark-one" /><span className="voice-spark voice-spark-two" /><span className="voice-spark voice-spark-three" /></div>
+              <CallVisualizer mode={legacyVizMode} className="mb-2" />
+              <p role="status" aria-live="polite" className="flex items-center gap-2 text-base font-medium">{phase === 'connecting' && <PhoneCall className="call-phone-ringing size-4 text-amber-600" />}{previewAudible ? 'Voice preview playing' : label}</p><p className="mt-2 font-data text-xs tabular-nums text-brand-muted">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</p>
               {phase === 'speaking' && <button onClick={interrupt} className="mt-3 rounded-full border border-brand-border px-4 py-2 text-xs text-brand-muted hover:bg-brand-bg">Tap to speak</button>}
             </div>
             <div className="relative z-10 flex w-full flex-col items-center gap-4">
