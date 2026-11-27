@@ -2,13 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Mic, MicOff, Phone, PhoneCall, PhoneOff, Volume2, Loader2, MapPin, Clock3, Stethoscope, ShieldCheck } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Waveform } from '@/components/voice/waveform'
-import { CallOrb } from '@/components/voice/call-orb'
-import { CallVisualizer, type VisualizerMode } from '@/components/voice/call-visualizer'
-import type { OrbPhase } from '@/components/three/voxa-orb-3d'
+import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX, Loader2, MapPin, Clock3 } from 'lucide-react'
+import { CloudOrb, type CloudOrbPhase } from '@/components/voice/cloud-orb'
 import { createCallRingtone, type CallRingtone } from '@/lib/voice/ringtone'
+import { useAudioOutputControl } from '@/lib/voice/use-audio-output'
 import { getClientVoiceMode, type VoiceMode } from '@/lib/voice/mode'
 import { primeSpeaker, playOnlineSpeech, prepareSpeechAudio } from '@/lib/voice/online-playback'
 import { playBrowserSpeech } from '@/lib/voice/browser-playback'
@@ -38,26 +35,26 @@ const LiveKitCall = dynamic(
   {
     ssr: false,
     loading: () => (
-      <section className="clinic-call-shell mx-auto w-full max-w-4xl text-brand-text">
-        <div className="mb-6 flex h-[76px] items-center justify-between rounded-2xl border border-brand-border bg-brand-surface px-5 sm:px-7">
-          <div className="flex items-center gap-3">
-            <div className="size-11 animate-pulse rounded-xl bg-brand-teal/20" />
-            <div className="space-y-2">
-              <div className="h-4 w-44 animate-pulse rounded bg-brand-border/70" />
-              <div className="h-2.5 w-32 animate-pulse rounded bg-brand-border/50" />
-            </div>
-          </div>
-          <span
-            data-voice-mode="livekit"
-            className="rounded-full border border-brand-border bg-brand-surface-raised px-2.5 py-1.5 font-data text-[11px] font-medium text-brand-muted"
-          >
-            Mode: livekit
-          </span>
+      <section className="relative mx-auto flex min-h-[calc(100svh-5.5rem)] w-full max-w-md flex-col items-center justify-between px-5 pb-10 pt-8 text-center text-brand-text sm:py-12">
+        <span
+          data-voice-mode="livekit"
+          className="absolute right-4 top-2 rounded-full border border-brand-border/70 bg-brand-surface/80 px-2.5 py-0.5 font-data text-[10px] text-brand-muted"
+        >
+          Mode: livekit
+        </span>
+        <header className="pt-4">
+          <h1 className="font-display text-2xl font-medium tracking-tight sm:text-[1.85rem]">
+            Clinic Reception
+          </h1>
+        </header>
+        <div className="my-auto flex flex-col items-center py-6">
+          <div className="cloud-orb-fallback size-[224px] rounded-full shadow-[0_18px_48px_rgba(78,104,90,0.16)] sm:size-[252px]" />
+          <p className="mt-10 flex items-center gap-2 text-base text-brand-muted">
+            <span className="size-2 animate-pulse rounded-full bg-brand-teal/70" />
+            Ready
+          </p>
         </div>
-        <div className="clinic-voice-room flex min-h-[540px] flex-col items-center justify-center rounded-[2rem] border border-brand-border bg-brand-surface p-8 text-center">
-          <div className="voice-orb animate-pulse" aria-hidden="true" />
-          <p className="mt-6 text-sm text-brand-muted">Preparing live voice studio...</p>
-        </div>
+        <div className="h-16" />
       </section>
     ),
   }
@@ -98,10 +95,18 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
   const [responseTime, setResponseTime] = useState<number | null>(null)
   const orbRef = useRef<HTMLDivElement>(null)
   const audioLevelRef = useRef(0)
+  const agentAudioLevelRef = useRef(0)
+  const speakerAudioCtx = useRef<AudioContext | null>(null)
+  const speakerAnalyser = useRef<AnalyserNode | null>(null)
+  const speakerSourceAttached = useRef<WeakSet<HTMLAudioElement>>(new WeakSet())
+  const speakerMeterFrame = useRef(0)
   const ringtoneRef = useRef<CallRingtone | null>(null)
   const [customerSpeaking, setCustomerSpeaking] = useState(false)
   const customerSpeakingRef = useRef(false)
   const lastCustomerVoiceAt = useRef(0)
+  const [outputNotice, setOutputNotice] = useState('')
+  const outputNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const audioOutput = useAudioOutputControl()
   const audioContext = useRef<AudioContext | null>(null)
   const animationFrame = useRef(0)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -245,10 +250,52 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
       try { rec.stop() } catch {}
     }
   }
+  function attachSpeakerAnalyser(audioEl: HTMLAudioElement) {
+    try {
+      if (!speakerSourceAttached.current.has(audioEl)) {
+        const ctx = speakerAudioCtx.current && speakerAudioCtx.current.state !== 'closed'
+          ? speakerAudioCtx.current
+          : new AudioContext()
+        speakerAudioCtx.current = ctx
+        const source = ctx.createMediaElementSource(audioEl)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        source.connect(analyser)
+        analyser.connect(ctx.destination)
+        speakerAnalyser.current = analyser
+        speakerSourceAttached.current.add(audioEl)
+      }
+      if (speakerAudioCtx.current?.state === 'suspended') {
+        void speakerAudioCtx.current.resume().catch(() => {})
+      }
+      if (!speakerMeterFrame.current && speakerAnalyser.current) {
+        const analyser = speakerAnalyser.current
+        const bins = new Uint8Array(analyser.frequencyBinCount)
+        const tick = () => {
+          if (!speaker.current || speaker.current.paused || speaker.current.muted) {
+            agentAudioLevelRef.current = 0
+          } else {
+            analyser.getByteFrequencyData(bins)
+            let sum = 0
+            for (let i = 0; i < bins.length; i++) sum += bins[i]
+            agentAudioLevelRef.current = sum / bins.length / 255
+          }
+          speakerMeterFrame.current = requestAnimationFrame(tick)
+        }
+        speakerMeterFrame.current = requestAnimationFrame(tick)
+      }
+    } catch {
+      /* Fallback to smooth orb cadence if Web Audio element routing is restricted */
+    }
+  }
+
   function stopAudio() {
     ringtoneRef.current?.stop({ playChime: false })
     stopRecognition()
     audioLevelRef.current = 0
+    agentAudioLevelRef.current = 0
+    cancelAnimationFrame(speakerMeterFrame.current)
+    speakerMeterFrame.current = 0
     if (customerSpeakingRef.current) {
       customerSpeakingRef.current = false
       setCustomerSpeaking(false)
@@ -299,6 +346,9 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
       cancelled = true; active.current = false; generation.current++
       request.current?.abort(); stopAudio()
       ringtoneRef.current?.dispose(); ringtoneRef.current = null
+      if (outputNoticeTimer.current) clearTimeout(outputNoticeTimer.current)
+      void speakerAudioCtx.current?.close().catch(() => {})
+      speakerAudioCtx.current = null
     }
     // The resource changes only when navigating to another agent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -379,6 +429,8 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
     }
     try {
       speaker.current ??= new Audio()
+      speaker.current.muted = audioOutput.agentAudioMuted
+      attachSpeakerAnalyser(speaker.current)
       try {
         await playOnlineSpeech({ audio: speaker.current, text, language: currentLanguage.current, style: presetRef.current, token, agentId, signal: control.signal, onStart, prepared })
         setAudioProvider('online')
@@ -386,7 +438,11 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
         if (control.signal.aborted) throw onlineError
         const native = selectBrowserVoice(window.speechSynthesis?.getVoices() ?? [], currentLanguage.current, presetRef.current, voiceUriRef.current)
         if (!native.voice) throw onlineError
-        await playBrowserSpeech({ text, language: currentLanguage.current, preset: presetRef.current, voiceUri: voiceUriRef.current, signal: control.signal, onStart })
+        if (!audioOutput.agentAudioMuted) {
+          await playBrowserSpeech({ text, language: currentLanguage.current, preset: presetRef.current, voiceUri: voiceUriRef.current, signal: control.signal, onStart })
+        } else {
+          onStart()
+        }
         setAudioProvider('browser')
       }
     } catch (error) {
@@ -559,7 +615,7 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
       if (active.current && session === generation.current) { pushTurn({ speaker: 'agent', text: reply }); pendingSpoken.current = ''; setStreamingReply(''); listenRef.current() }
     } catch (err) {
       if (session !== generation.current) return
-      active.current = false; stopAudio(); changePhase('ended')
+      active.current = false; stopAudio(); changePhase('idle')
       setError(err instanceof Error ? err.message : 'Please allow microphone access and try again.')
     }
   }
@@ -567,7 +623,7 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
   async function endCall() {
     if (!active.current) return
     active.current = false; generation.current++; request.current?.abort()
-    stopAudio(); changePhase('ended')
+    stopAudio(); changePhase('idle'); setElapsed(0)
     const transcript = [...history.current, ...(pendingSpoken.current ? [{ speaker: 'agent' as const, text: pendingSpoken.current }] : [])]
     if (!transcript.some(turn => turn.speaker === 'caller')) return
     setSaving(true); setNote('Saving your call and appointment request…')
@@ -597,55 +653,51 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
   }
   interruptRef.current = interrupt
 
+  async function handleSpeakerClick() {
+    speaker.current ??= new Audio()
+    const result = await audioOutput.handleSpeakerAction(async (deviceId) => {
+      const el = speaker.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+      if (el?.setSinkId) {
+        await el.setSinkId(deviceId)
+      }
+    })
+    if (result.switchedTo) {
+      setOutputNotice(`Speaker: ${result.switchedTo}`)
+      if (outputNoticeTimer.current) clearTimeout(outputNoticeTimer.current)
+      outputNoticeTimer.current = setTimeout(() => setOutputNotice(''), 2200)
+    } else {
+      if (speaker.current) speaker.current.muted = result.muted
+      if (result.muted) window.speechSynthesis?.cancel()
+    }
+  }
+
   const inCall = phase !== 'idle' && phase !== 'ended'
   const label =
     phase === 'listening' && muted
-      ? 'Microphone muted'
+      ? 'Muted'
       : phase === 'listening' && customerSpeaking
-        ? 'You are speaking'
+        ? 'Listening'
         : ({
-            idle: 'A conversation, just a call away.',
-            connecting: 'Connecting to agent...',
-            listening: 'Connected — speak naturally',
-            thinking: 'Agent is thinking...',
-            buffering: 'Connecting to agent...',
-            speaking: `${name || 'Your agent'} is speaking`,
-            ended: 'Call ended',
+            idle: 'Ready to call',
+            connecting: 'Connecting…',
+            listening: 'Connected',
+            thinking: 'Thinking…',
+            buffering: 'Connecting…',
+            speaking: 'Speaking',
+            ended: 'Ready to call',
           })[phase]
-  const legacyOrbPhase: OrbPhase =
+  const legacyOrbPhase: CloudOrbPhase =
     previewAudible || phase === 'speaking'
       ? 'speaking'
       : phase === 'connecting'
-        ? 'ringing'
-        : phase === 'listening' && customerSpeaking && !muted
-          ? 'customer-speaking'
-          : phase
-  const legacyVizMode: VisualizerMode =
-    previewAudible || phase === 'speaking'
-      ? 'agent-speaking'
-      : phase === 'connecting'
-        ? 'ringing'
-        : phase === 'buffering' || phase === 'thinking'
+        ? 'connecting'
+        : phase === 'thinking' || phase === 'buffering'
           ? 'thinking'
-          : phase === 'listening' && muted
-            ? 'muted'
-            : phase === 'listening' && customerSpeaking
-              ? 'customer-speaking'
-              : phase === 'listening'
-                ? 'silence'
-                : phase === 'ended'
-                  ? 'ended'
-                  : 'idle'
-  const legacyScenePhase =
-    previewAudible || phase === 'speaking'
-      ? 'speaking'
-      : phase === 'connecting'
-        ? 'ringing'
-        : muted && phase === 'listening'
-          ? 'muted'
-          : customerSpeaking && phase === 'listening'
+          : phase === 'listening' && customerSpeaking && !muted
             ? 'customer-speaking'
-            : phase
+            : phase === 'listening'
+              ? 'listening'
+              : 'idle'
 
   const selection = selectBrowserVoice(voices, language, preset, voiceUri)
   const orderedDoctors = [...doctors].sort((a, b) => Number(highlighted.includes(b.id)) - Number(highlighted.includes(a.id)))
@@ -666,30 +718,148 @@ function LegacyAudioCall({ agentId, token }: { agentId?: string; token?: string 
 
   return (
     <section className="clinic-call-shell mx-auto w-full max-w-7xl text-brand-text">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-brand-border bg-brand-surface px-5 py-4 sm:px-7">
-        <div className="flex items-center gap-3"><div className="flex size-11 items-center justify-center rounded-xl bg-brand-teal/20"><Stethoscope className="size-5" /></div><div><p className="font-display text-lg font-semibold">{clinic?.clinic_name || name || 'Clinic reception'}</p><p className="mt-0.5 font-data text-[10px] uppercase tracking-[.18em] text-brand-muted">Your care starts with a conversation</p></div></div>
-        <div className="flex flex-wrap items-center gap-2"><span data-voice-mode="legacy" className="rounded-full border border-brand-border bg-brand-surface-raised px-2.5 py-1.5 font-data text-[11px] font-medium text-brand-muted">Mode: legacy</span><div className="flex items-center gap-2 rounded-full border border-brand-border bg-brand-surface-raised px-3 py-2 text-xs"><span className={`size-2 rounded-full ${inCall ? 'animate-pulse bg-brand-teal' : 'bg-brand-muted/50'}`} />{phase === 'connecting' ? 'Connecting to reception' : inCall ? 'Reception call connected' : 'Virtual reception'}</div></div>
-      </header>
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
         <div className="space-y-5 lg:sticky lg:top-6">
-          <div className="clinic-voice-room relative flex min-h-[590px] flex-col items-center justify-between overflow-hidden rounded-[2rem] border border-brand-border bg-brand-surface p-6 text-center sm:p-8">
-            <div className="relative z-10 flex w-full items-center justify-between"><span className="flex items-center gap-2 font-data text-[10px] uppercase tracking-[.18em]"><Waveform />VOXA / Care line</span><span className="flex items-center gap-1.5 text-xs text-brand-muted"><ShieldCheck className="size-3.5" />Clinic receptionist</span></div>
-            <div className="relative z-10 flex flex-col items-center py-6"><p className="font-data text-[10px] uppercase tracking-[.24em] text-brand-muted">A familiar voice. A little more care.</p><h1 className="mt-3 font-display text-3xl tracking-tight sm:text-4xl">{name || 'Connecting...'}</h1>
-              <div ref={orbRef} data-phase={legacyScenePhase} className="call-orb-stage my-6" aria-hidden="true"><span className="call-orb-glow" /><span className="call-orb-ring" />{phase === 'connecting' && <><span className="call-connect-arc call-connect-arc-amber" /><span className="call-ring-ripple call-ring-ripple-amber" /><span className="call-ring-ripple call-ring-ripple-amber call-ring-ripple-delay" /></>}{(phase === 'thinking' || phase === 'buffering') && <span className="call-connect-arc" />}{(phase === 'speaking' || previewAudible) && <><span className="call-ring-ripple" /><span className="call-ring-ripple call-ring-ripple-delay" /></>}<CallOrb phase={legacyOrbPhase} muted={muted} previewAudible={previewAudible} audioLevelRef={audioLevelRef} /></div>
-              <CallVisualizer mode={legacyVizMode} className="mb-3" />
-              <p role="status" aria-live="polite" className="flex items-center gap-2 text-base font-medium">{phase === 'connecting' && <PhoneCall className="call-phone-ringing size-4 text-amber-600" />}{previewAudible ? 'Voice preview playing' : label}</p><p className="mt-2 font-data text-xs tabular-nums text-brand-muted">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</p>
-              {phase === 'speaking' && <button onClick={interrupt} className="mt-3 rounded-full border border-brand-border px-4 py-2 text-xs text-brand-muted hover:bg-brand-bg">Tap to speak</button>}
+          <div className="relative flex min-h-[580px] flex-col items-center justify-between rounded-[2rem] border border-brand-border/70 bg-brand-bg px-5 pb-8 pt-7 text-center sm:min-h-[620px] sm:px-8 sm:py-10">
+            <span
+              data-voice-mode="legacy"
+              className="absolute right-4 top-4 rounded-full border border-brand-border/70 bg-brand-surface/80 px-2.5 py-0.5 font-data text-[10px] text-brand-muted"
+            >
+              Mode: legacy
+            </span>
+
+            <header className="pt-2">
+              <h1 className="font-display text-2xl font-medium tracking-tight text-brand-text sm:text-[1.85rem]">
+                {clinic?.clinic_name || name || 'Clinic Reception'}
+              </h1>
+              {inCall && (
+                <p className="mt-1 font-data text-xs tabular-nums text-brand-muted">
+                  {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}
+                </p>
+              )}
+            </header>
+
+            <div ref={orbRef} className="my-auto flex flex-col items-center py-6">
+              <CloudOrb
+                phase={legacyOrbPhase}
+                muted={muted}
+                micLevelRef={audioLevelRef}
+                agentLevelRef={agentAudioLevelRef}
+              />
+
+              <p
+                role="status"
+                aria-live="polite"
+                className="mt-9 flex items-center justify-center gap-2 text-base font-normal text-brand-text/85"
+              >
+                <span
+                  className={`size-2 rounded-full ${
+                    phase === 'connecting' || phase === 'speaking' || customerSpeaking
+                      ? 'animate-pulse bg-brand-teal'
+                      : inCall && !muted
+                        ? 'bg-brand-teal'
+                        : 'bg-brand-teal/55'
+                  }`}
+                />
+                {previewAudible ? 'Voice preview' : label}
+              </p>
+
+              {outputNotice && <p className="mt-2 font-data text-[11px] text-brand-muted">{outputNotice}</p>}
+              {!audioOutput.canSwitchOutput && audioOutput.agentAudioMuted && (
+                <p className="mt-2 text-xs text-brand-muted">Agent audio muted</p>
+              )}
+              {phase === 'speaking' && (
+                <button
+                  type="button"
+                  onClick={interrupt}
+                  className="mt-3 rounded-full border border-brand-border bg-brand-surface px-4 py-1.5 text-xs text-brand-muted hover:bg-brand-surface-raised"
+                >
+                  Tap to speak
+                </button>
+              )}
             </div>
-            <div className="relative z-10 flex w-full flex-col items-center gap-4">
-              <label className="flex items-center gap-3 rounded-full border border-brand-border bg-brand-surface-raised px-4 py-2 text-xs"><Mic className="size-3.5" />Listening language<select aria-label="Microphone listening language" disabled={inCall && phase !== 'listening'} value={inputOverride || languageLocales[language]} onChange={event => changeListeningLanguage(event.target.value)} className="max-w-36 bg-transparent font-medium outline-none"><option value="ur-PK">Urdu</option><option value="en-US">English</option><option value="pa-PK">Punjabi</option><option value="hi-IN">Hindi</option></select></label>
+
+            <div className="flex w-full flex-col items-center gap-4">
               {!supported && <p role="alert" className="text-sm text-red-700">Open in Chrome or Edge and allow microphone access for audio calls.</p>}
-              {error && <p role="alert" className="w-full rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
-              {audioProblem && lastReplyText.current && <button onClick={replayAudio} className="rounded-full border border-brand-text bg-brand-text px-4 py-2 text-xs text-brand-bg">Enable audio / replay</button>}
+              {error && <p role="alert" className="w-full max-w-sm rounded-2xl border border-red-200 bg-red-50/90 p-3 text-xs text-red-800">{error}</p>}
+              {audioProblem && lastReplyText.current && <button type="button" onClick={replayAudio} className="rounded-full border border-brand-text bg-brand-text px-4 py-2 text-xs text-brand-bg">Enable audio / replay</button>}
               {note && <p role="status" className="text-xs text-brand-muted">{note}</p>}
-              {highlighted.length > 0 && doctors.some(doctor => highlighted.includes(doctor.id)) && <button onClick={() => document.getElementById(`doctor-${highlighted[0]}`)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })} className="rounded-full border border-brand-teal bg-brand-teal/15 px-4 py-2 text-xs">View doctor profile</button>}
-              <div className="flex items-center justify-center gap-5">{inCall ? <><button onClick={toggleMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} aria-pressed={muted} className={`flex size-14 items-center justify-center rounded-full border border-brand-border ${muted ? 'bg-brand-text text-brand-bg' : 'bg-brand-bg'}`}>{muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}</button><button onClick={endCall} aria-label="End call" className="flex size-16 items-center justify-center rounded-full bg-[#B74434] text-white shadow-lg hover:bg-[#9c382b]"><PhoneOff className="size-6" /></button><span aria-label="Speaker output" className="flex size-14 items-center justify-center rounded-full border border-brand-border bg-brand-bg"><Volume2 className="size-5" /></span></> : <Button onClick={startCall} disabled={!name || !supported || saving || previewing} className="h-14 rounded-full px-8 text-base">{saving ? <Loader2 className="size-5 animate-spin" /> : <Phone className="size-5" />}{saving ? 'Saving call' : phase === 'ended' ? 'Call reception again' : 'Talk to reception'}</Button>}</div>
-              <p className="max-w-sm text-xs leading-relaxed text-brand-muted">{inCall ? 'Speak naturally. Doctor profiles appear beside your call. Hang up to save your request.' : 'Ask about our doctors, clinic information or an appointment. No chat box, just your voice.'}</p>
-              <div className="flex flex-wrap justify-center gap-3 font-data text-[9px] uppercase tracking-widest text-brand-muted"><span>Reply: {({en:'English',ur:'Urdu',pa:'Punjabi',hi:'Hindi'})[language]}</span>{responseTime !== null && <span>Last response {responseTime.toFixed(1)}s</span>}</div>
+              {highlighted.length > 0 && doctors.some(doctor => highlighted.includes(doctor.id)) && <button type="button" onClick={() => document.getElementById(`doctor-${highlighted[0]}`)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })} className="rounded-full border border-brand-teal bg-brand-teal/15 px-4 py-2 text-xs">View doctor profile</button>}
+
+              <div className="flex items-center justify-center gap-7 sm:gap-9">
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  disabled={!inCall}
+                  aria-label={inCall ? (muted ? 'Unmute microphone' : 'Mute microphone') : 'Microphone unavailable until call starts'}
+                  aria-pressed={inCall ? muted : undefined}
+                  title={muted ? 'Unmute microphone' : 'Mute microphone'}
+                  className={`flex size-14 items-center justify-center rounded-full transition-all sm:size-16 ${
+                    !inCall
+                      ? 'bg-[#ECE5D5] text-brand-text/40'
+                      : muted
+                        ? 'bg-brand-text text-brand-bg hover:scale-105 active:scale-95'
+                        : 'bg-[#ECE5D5] text-brand-text hover:scale-105 hover:bg-[#e3dac6] active:scale-95'
+                  }`}
+                >
+                  {muted ? <MicOff className="size-5 sm:size-6" strokeWidth={1.75} /> : <Mic className="size-5 sm:size-6" strokeWidth={1.75} />}
+                </button>
+
+                {inCall ? (
+                  <button
+                    type="button"
+                    onClick={endCall}
+                    aria-label="End call"
+                    title="End call"
+                    className="flex size-16 items-center justify-center rounded-full bg-[#B5422D] text-white shadow-md transition-transform hover:scale-105 hover:bg-[#9f3825] active:scale-95 sm:size-[68px]"
+                  >
+                    <PhoneOff className="size-6" strokeWidth={1.9} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={startCall}
+                    disabled={!name || !supported || saving || previewing}
+                    aria-label="Start call"
+                    title="Start call"
+                    className="flex size-16 items-center justify-center rounded-full bg-[#5B7760] text-white shadow-md transition-transform hover:scale-105 hover:bg-[#4e6853] active:scale-95 disabled:opacity-45 sm:size-[68px]"
+                  >
+                    {saving ? <Loader2 className="size-6 animate-spin" /> : <Phone className="size-6" strokeWidth={1.9} />}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleSpeakerClick}
+                  aria-label={audioOutput.ariaLabel}
+                  aria-pressed={!audioOutput.canSwitchOutput ? audioOutput.agentAudioMuted : undefined}
+                  title={audioOutput.ariaLabel}
+                  className={`flex size-14 items-center justify-center rounded-full transition-all hover:scale-105 active:scale-95 sm:size-16 ${
+                    !audioOutput.canSwitchOutput && audioOutput.agentAudioMuted
+                      ? 'bg-brand-text text-brand-bg'
+                      : 'bg-[#ECE5D5] text-brand-text hover:bg-[#e3dac6]'
+                  }`}
+                >
+                  {!audioOutput.canSwitchOutput && audioOutput.agentAudioMuted ? (
+                    <VolumeX className="size-5 sm:size-6" strokeWidth={1.75} />
+                  ) : (
+                    <Volume2 className="size-5 sm:size-6" strokeWidth={1.75} />
+                  )}
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-1 text-xs text-brand-muted">
+                <label className="flex items-center gap-2 rounded-full border border-brand-border/80 bg-brand-surface px-3 py-1.5 text-[11px]">
+                  <Mic className="size-3" />
+                  <select aria-label="Microphone listening language" disabled={inCall && phase !== 'listening'} value={inputOverride || languageLocales[language]} onChange={event => changeListeningLanguage(event.target.value)} className="max-w-32 bg-transparent font-medium text-brand-text outline-none">
+                    <option value="ur-PK">Urdu</option>
+                    <option value="en-US">English</option>
+                    <option value="pa-PK">Punjabi</option>
+                    <option value="hi-IN">Hindi</option>
+                  </select>
+                </label>
+                {responseTime !== null && <span className="font-data text-[10px] uppercase tracking-wider">{responseTime.toFixed(1)}s</span>}
+              </div>
             </div>
           </div>
           <div className="rounded-2xl border border-brand-border bg-brand-surface p-5">

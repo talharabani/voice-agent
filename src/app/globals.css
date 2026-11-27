@@ -192,6 +192,31 @@
 @keyframes voice-halo-breathe { 50% { opacity: .5; scale: 1.09; } }
 @keyframes voice-spark-drift { 50% { transform: translate(10px, -16px); opacity: .25; } }
 
+/* Serene cloud orb fallback when WebGL is unavailable */
+.cloud-orb-fallback {
+  background:
+    radial-gradient(ellipse 75% 55% at 28% 72%, rgba(244, 239, 224, 0.92) 0%, transparent 68%),
+    radial-gradient(ellipse 70% 50% at 68% 62%, rgba(235, 229, 211, 0.78) 0%, transparent 64%),
+    radial-gradient(ellipse 80% 60% at 24% 44%, rgba(226, 224, 206, 0.65) 0%, transparent 62%),
+    linear-gradient(215deg, #4e685a 0%, #7d957e 46%, #bcc8ad 82%, #e8e2cf 100%);
+  animation: cloud-fallback-drift 12s ease-in-out infinite alternate;
+}
+.cloud-orb-fallback[data-phase="speaking"] {
+  animation-duration: 3.6s;
+}
+.cloud-orb-fallback[data-phase="connecting"],
+.cloud-orb-fallback[data-phase="ringing"] {
+  animation: cloud-fallback-pulse 2.4s ease-in-out infinite;
+}
+@keyframes cloud-fallback-drift {
+  0% { filter: brightness(0.99); transform: scale(1); }
+  100% { filter: brightness(1.04); transform: scale(1.04); }
+}
+@keyframes cloud-fallback-pulse {
+  0%, 100% { opacity: 0.92; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+
 /* Clean, refined active call stage & concentric halo animations */
 .call-orb-stage {
   position: relative;
@@ -344,6 +369,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .voice-light-scene *, .voice-light-scene .voice-orb,
+  .cloud-orb-fallback,
   .call-ring-ripple, .call-connect-arc, .call-phone-ringing,
   .call-viz-agent, .call-viz-customer, .call-viz-ringing,
   .call-viz-connecting, .call-viz-thinking, .call-viz-calm {
