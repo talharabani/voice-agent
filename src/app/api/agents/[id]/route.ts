@@ -51,6 +51,7 @@ export async function PATCH(
       .from("agents")
       .update({ ...input, updated_at: new Date().toISOString() })
       .eq("id", id)
+      .eq("user_id", user.id)
       .select()
       .single();
 
@@ -74,7 +75,11 @@ export async function DELETE(
     const { id } = await params;
     await getOwnedAgentOr404(user.id, id);
 
-    const { error } = await supabaseAdmin.from("agents").delete().eq("id", id);
+    const { error } = await supabaseAdmin
+      .from("agents")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id);
     if (error) throw error;
 
     return NextResponse.json({ success: true });

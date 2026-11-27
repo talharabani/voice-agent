@@ -29,17 +29,29 @@ ZUBAN:
 - Mareez jis zuban mein bole (Urdu, Punjabi, English, ya mix), usi mein jawab do. Asaan roz marrah ki bol chaal rakho.
 - CRITICAL FOR VOICE TTS: Urdu mein jawab HAMESHA asli Urdu script (اردو حروف) mein likho, Roman Urdu mein nahi, warna voice engine ajeeb parhega. Urdu mein aam English lafz (appointment, doctor, whitening, acne) normal hain.
 
-CLINIC KI MALOOMAT (sirf isi par bharosa karo):
+CLINIC KI MALOOMAT (SIRF ISI PAR BHAROSA KARO — KUCH KHUD SE NA BANAO):
 - Naam: {{clinic_name}}
 - Address: {{clinic_address}}
 - Timing: {{clinic_timings}}
 - Band rehne ke din: {{off_days}}
+- Appointment duration: {{slot_minutes}} minutes
 - Phone / WhatsApp: {{clinic_contact}}
-- Doctors aur fees: {{doctors_list}}
-- Services: {{services_list}}
+- Doctors aur fees:
+{{doctors_list}}
+- Services:
+{{services_list}}
+- Booking rules: {{booking_rules}}
+- FAQs & Clinic Notes (sirf maloomat ke liye):
+{{clinic_notes}}
+
+SAKHT HADUD (STRICT CLINIC BOUNDARIES):
+- Sirf wahi services aur doctors batao jo upar {{clinic_name}} ki list mein maujood hain.
+- Agar mareez koi aisi service ya department maange jo is clinic mein nahi hai, to narmi se batao ke yeh service {{clinic_name}} par dastiyab nahi hai, aur jo services available hain wo batao.
+- Kabhi koi doctor, service, fee, ya slot khud se ijaad na karo.
+- Mareez ke masle ke mutabiq sirf usi specialty ke doctor ka naam lo jo upar list mein hai.
 
 KAAM:
-Appointment book, badalna, cancel, doctor ki timing aur fees batana.
+Appointment book, badalna, cancel, doctor ki timing aur fees batana, aur mareez ke masle ke mutabiq sahi department aur doctor batana.
 
 APPOINTMENT KA TARIQA:
 Sirf jo cheez abhi tak nahi mili wo ek ek karke poochho: naam, phone number, masla ya doctor, din aur waqt.
@@ -83,32 +95,76 @@ function fillPromptTemplate(template: string, settings: Record<string, string>) 
 export function buildSystemPrompt(
   agent: AgentRow,
   knowledge: KnowledgeDocRow[],
-  clinic?: { clinic_name?: string | null; address?: string | null; opening_hours?: string | null; phone?: string | null } | null,
-  doctors?: Array<{ name: string; specialty?: string | null; experience_years?: number | null; availability?: unknown }>
+  clinic?: {
+    clinic_name?: string | null;
+    address?: string | null;
+    opening_hours?: string | null;
+    phone?: string | null;
+    off_days?: string | null;
+    default_slot_minutes?: number | null;
+    booking_rules?: string | null;
+    custom_instructions?: string | null;
+    services?: Array<{ name: string; category?: string; description?: string; fee?: string; duration_minutes?: number | null }>;
+  } | null,
+  doctors?: Array<{
+    name: string;
+    specialty?: string | null;
+    qualifications?: string | null;
+    experience_years?: number | null;
+    consultation_fee?: string | null;
+    availability?: unknown;
+    concern_keywords?: string[];
+  }>
 ) {
   const doctorsList = doctors?.length
     ? doctors
-        .map((d) => `- ${d.name}${d.specialty ? `, ${d.specialty}` : ''}${d.availability ? `, timing: ${JSON.stringify(d.availability)}` : ''}`)
+        .map((d) => {
+          const parts = [d.name];
+          if (d.specialty) parts.push(d.specialty);
+          if (d.qualifications) parts.push(`(${d.qualifications})`);
+          if (d.consultation_fee) parts.push(`Fee: ${d.consultation_fee}`);
+          if (d.availability) parts.push(`Timing: ${typeof d.availability === 'string' ? d.availability : JSON.stringify(d.availability)}`);
+          if (d.concern_keywords?.length) parts.push(`Keywords: ${d.concern_keywords.join(', ')}`);
+          return `- ${parts.join(' | ')}`;
+        })
         .join('\n')
-    : 'Not published yet (ask reception to confirm)';
+    : '- Not published yet (ask reception to confirm)';
 
-  const servicesList = knowledge.length
+  const servicesList = clinic?.services?.length
+    ? clinic.services
+        .map((s) => {
+          const parts = [s.name];
+          if (s.category) parts.push(`(${s.category})`);
+          if (s.fee) parts.push(`Fee: ${s.fee}`);
+          if (s.duration_minutes) parts.push(`${s.duration_minutes} min`);
+          if (s.description) parts.push(`— ${s.description}`);
+          return `- ${parts.join(' ')}`;
+        })
+        .join('\n')
+    : doctors?.length
+      ? `- ${Array.from(new Set(doctors.map((d) => d.specialty).filter(Boolean))).join(', ')}`
+      : '- Only general clinic reception (no specific services listed yet)';
+
+  const clinicNotes = knowledge.length
     ? knowledge.map((doc) => `- ${doc.name}: ${(doc.content || doc.url || '').slice(0, 800)}`).join('\n')
-    : 'General clinic reception and appointment booking';
+    : 'None.';
 
   return fillPromptTemplate(VOICE_PROMPT_TEMPLATE, {
     agent_name: agent.name || 'Ayesha',
     clinic_name: clinic?.clinic_name || 'Clinic',
     clinic_address: clinic?.address || 'Not published',
     clinic_timings: clinic?.opening_hours || 'Not published',
-    off_days: 'Check clinic timings',
+    off_days: clinic?.off_days?.trim() || 'Check clinic timings',
+    slot_minutes: String(clinic?.default_slot_minutes ?? 30),
     clinic_contact: clinic?.phone || 'Not published',
     doctors_list: doctorsList,
     services_list: servicesList,
+    booking_rules: clinic?.booking_rules?.trim() || 'Confirm patient name, phone, service, doctor, and preferred time before booking.',
+    clinic_notes: clinicNotes,
     default_language: agent.language || 'Urdu',
     tone: 'narm aur hamdard',
     emergency_number: clinic?.phone || '1122',
-    extra_rules: [agent.system_prompt, agent.description].filter(Boolean).join(' ') || 'Follow verified clinic facts only.',
+    extra_rules: [clinic?.custom_instructions, agent.system_prompt, agent.description].filter(Boolean).join(' ') || 'Follow verified clinic facts only.',
     fallback_action: 'Mareez ko clinic ke number par transfer ya rabta karne ka kaho ya kaho ke staff wapas call karega.',
   });
 }

@@ -1,5 +1,7 @@
 import { z } from 'zod';
+
 const terms = z.array(z.string().trim().min(1).max(80)).max(30);
+
 export const doctorSchema = z.object({
   name: z.string().trim().min(2).max(120),
   specialty: z.string().trim().min(2).max(160),
@@ -16,6 +18,8 @@ export const doctorSchema = z.object({
     .nullable()
     .optional(),
   availability: z.string().trim().max(500).default(''),
+  consultation_fee: z.string().trim().max(80).optional().default(''),
+  slot_duration_minutes: z.number().int().min(5).max(180).nullable().optional().default(null),
   languages: terms.default([]),
   concern_keywords: terms.default([]),
   is_active: z.boolean().default(true),

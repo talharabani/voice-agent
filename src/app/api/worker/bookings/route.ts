@@ -4,11 +4,12 @@ import { apiErrorResponse, ApiError } from '@/lib/api-helpers';
 import { requireWorkerSecret } from '@/lib/worker-auth';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { loadClinicDirectory } from '@/lib/clinic-directory';
-import { sendAppointmentConfirmation, whatsappConfigured } from '@/lib/whatsapp';
+import { notifyClinicStaff, sendAppointmentConfirmation, whatsappConfigured } from '@/lib/whatsapp';
 import {
   checkSlotOverlap,
-  getSlotMinutes,
   matchClinicDoctor,
+  matchClinicService,
+  resolveSlotDurationMinutes,
   validateSlotRequest,
 } from '@/lib/voice/slot-utils';
 
@@ -27,6 +28,7 @@ const bookingActionSchema = z.discriminatedUnion('action', [
     doctor: z.string().min(1).max(160),
     date: z.string().min(1).max(40),
     time: z.string().min(1).max(40),
+    service: z.string().max(160).optional().default(''),
   }),
   z.object({
     action: z.literal('book_appointment'),
@@ -36,6 +38,7 @@ const bookingActionSchema = z.discriminatedUnion('action', [
     doctor: z.string().min(1).max(160),
     date: z.string().min(1).max(40),
     time: z.string().min(1).max(40),
+    service: z.string().max(160).optional().default(''),
     reason: z.string().max(500).optional().default(''),
   }),
   z.object({
@@ -56,17 +59,27 @@ export async function POST(request: Request) {
     }
     const input = parsed.data;
 
+    // Strictly scope every operation to an active agent and its owning clinic tenant (agent.user_id)
     const { data: agent, error: agentError } = await supabaseAdmin
       .from('agents')
-      .select('id, user_id, timezone')
+      .select('id, user_id, timezone, is_active')
       .eq('id', input.agent_id)
+      .eq('is_active', true)
       .maybeSingle();
 
     if (agentError) throw agentError;
-    if (!agent) throw new ApiError('Agent not found.', 404);
+    if (!agent) throw new ApiError('Active agent not found.', 404);
 
     if (input.action === 'check_availability' || input.action === 'book_appointment') {
       const directory = await loadClinicDirectory(agent.user_id);
+
+      // 1. Validate service against this clinic's configured services (strict tenant boundary)
+      const serviceMatch = matchClinicService(input.service, directory.services, directory.doctors);
+      if (!serviceMatch.ok) {
+        return NextResponse.json({ ok: false, available: false, message: serviceMatch.message });
+      }
+
+      // 2. Validate doctor strictly against this clinic's active doctors
       const doctorMatch = matchClinicDoctor(input.doctor, directory.doctors);
       if (!doctorMatch.ok) {
         return NextResponse.json({ ok: false, available: false, message: doctorMatch.message });
@@ -74,14 +87,23 @@ export async function POST(request: Request) {
 
       const canonicalDoctor = doctorMatch.doctor;
       const doctorName = canonicalDoctor?.name ?? input.doctor.trim();
+      const resolvedService =
+        serviceMatch.label ||
+        (canonicalDoctor?.specialty ? `${canonicalDoctor.specialty} consultation` : 'Clinic consultation');
       const timezone = directory.clinic?.timezone || agent.timezone || 'Asia/Karachi';
-      const slotMinutes = getSlotMinutes();
+      const slotMinutes = resolveSlotDurationMinutes({
+        service: serviceMatch.service,
+        doctor: canonicalDoctor,
+        clinic: directory.clinic,
+      });
 
+      // 3. Validate slot against clinic hours, off_days, doctor availability, and duration
       const slot = validateSlotRequest({
         date: input.date,
         time: input.time,
         timezone,
         clinicHours: directory.clinic?.opening_hours,
+        offDays: directory.clinic?.off_days,
         doctorAvailability: canonicalDoctor?.availability,
         slotMinutes,
       });
@@ -90,6 +112,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: false, available: false, message: slot.message });
       }
 
+      // 4. Check tenant-scoped appointment conflicts for this doctor
       const query = supabaseAdmin
         .from('appointments')
         .select('id, scheduled_at, requested_time')
@@ -113,7 +136,12 @@ export async function POST(request: Request) {
         return NextResponse.json({
           ok: true,
           available: !hasOverlap,
-          message: hasOverlap ? 'That slot is already taken. Offer another time.' : 'Available.',
+          slot_minutes: slot.slotMinutes,
+          doctor: doctorName,
+          service: resolvedService,
+          message: hasOverlap
+            ? 'That slot is already taken. Offer another time.'
+            : `Available (${slot.slotMinutes}-minute slot with ${doctorName}).`,
         });
       }
 
@@ -124,6 +152,7 @@ export async function POST(request: Request) {
         });
       }
 
+      // 5. Persist appointment strictly under agent.user_id
       const normPhone = normalizePhone(input.phone);
       const { data: appt, error: insertError } = await supabaseAdmin
         .from('appointments')
@@ -137,18 +166,20 @@ export async function POST(request: Request) {
           requested_doctor: doctorName,
           requested_time: slot.normalizedTime,
           scheduled_at: slot.scheduledAtIso,
-          patient_concern: input.reason || 'Consultation',
-          service: 'Clinic consultation',
+          patient_concern: input.reason || resolvedService,
+          service: resolvedService,
           status: 'requested',
           whatsapp_consent: true,
           call_summary: [
+            `Service: ${resolvedService}`,
             `Requested doctor: ${doctorName}`,
-            `Concern: ${input.reason || 'Consultation'}`,
+            `Duration: ${slot.slotMinutes} minutes`,
+            `Concern: ${input.reason || resolvedService}`,
             `Preferred time: ${slot.normalizedTime}`,
             'Booked via LiveKit voice worker',
           ].join('\n'),
         })
-        .select('id')
+        .select('id, customer_name, customer_phone, service, doctor_name, requested_time, patient_concern')
         .single();
 
       if (insertError) {
@@ -162,14 +193,24 @@ export async function POST(request: Request) {
       }
       if (!appt) throw new Error('Failed to save appointment');
 
+      // 6. Notify designated clinic staff ONLY after database creation succeeded
+      const staffNotify = await notifyClinicStaff({
+        clinic: directory.clinic,
+        appointment: appt,
+      });
+
       return NextResponse.json({
         ok: true,
         appointment_id: appt.id,
+        service: resolvedService,
+        doctor: doctorName,
+        requested_time: slot.normalizedTime,
+        staff_notified: staffNotify.whatsappSent || staffNotify.webhookSent,
         message: 'Success: appointment booked.',
       });
     }
 
-    // send_whatsapp_confirmation
+    // send_whatsapp_confirmation (strictly scoped to agent.user_id & agent.id)
     const normPhone = normalizePhone(input.phone);
     if (!whatsappConfigured()) {
       return NextResponse.json({
@@ -181,6 +222,7 @@ export async function POST(request: Request) {
     const { data: recentAppt } = await supabaseAdmin
       .from('appointments')
       .select('id')
+      .eq('user_id', agent.user_id)
       .eq('agent_id', agent.id)
       .eq('customer_phone', normPhone)
       .order('created_at', { ascending: false })

@@ -1,10 +1,94 @@
-import type { PublicDoctor } from '@/types/database';
+import type { ClinicProfileRow, ClinicService, PublicDoctor } from '@/types/database';
 
-const DEFAULT_SLOT_MINUTES = Math.min(120, Math.max(5, Number(process.env.CLINIC_SLOT_MINUTES || 30)));
+const DEFAULT_SLOT_MINUTES = Math.min(180, Math.max(5, Number(process.env.CLINIC_SLOT_MINUTES || 30)));
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
 export function getSlotMinutes(): number {
   return DEFAULT_SLOT_MINUTES;
+}
+
+export function resolveSlotDurationMinutes({
+  service,
+  doctor,
+  clinic,
+}: {
+  service?: ClinicService | null;
+  doctor?: PublicDoctor | null;
+  clinic?: ClinicProfileRow | null;
+}): number {
+  const candidate =
+    service?.duration_minutes ??
+    doctor?.slot_duration_minutes ??
+    clinic?.default_slot_minutes ??
+    DEFAULT_SLOT_MINUTES;
+  return Math.min(180, Math.max(5, Number(candidate) || DEFAULT_SLOT_MINUTES));
+}
+
+function normalizeTextKey(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function matchClinicService(
+  inputService: string | null | undefined,
+  services: ClinicService[],
+  doctors: PublicDoctor[]
+): { ok: true; service: ClinicService | null; label: string | null } | { ok: false; message: string } {
+  const trimmed = (inputService ?? '').trim();
+  if (!trimmed) {
+    return { ok: true, service: null, label: null };
+  }
+
+  // If the clinic has not defined explicit services yet, allow any request that matches doctor specialties or pass through cleanly
+  if (!services.length) {
+    return { ok: true, service: null, label: trimmed };
+  }
+
+  const target = normalizeTextKey(trimmed);
+  if (!target) {
+    return { ok: true, service: null, label: null };
+  }
+
+  const exact = services.find(
+    (s) => normalizeTextKey(s.name) === target || (s.category && normalizeTextKey(s.category) === target)
+  );
+  if (exact) return { ok: true, service: exact, label: exact.name };
+
+  const partial = services.find((s) => {
+    const nameKey = normalizeTextKey(s.name);
+    const catKey = normalizeTextKey(s.category);
+    const descKey = normalizeTextKey(s.description);
+    return (
+      (nameKey && (nameKey.includes(target) || target.includes(nameKey))) ||
+      (catKey && (catKey.includes(target) || target.includes(catKey))) ||
+      (descKey && descKey.includes(target))
+    );
+  });
+  if (partial) return { ok: true, service: partial, label: partial.name };
+
+  // Also allow matching against an active doctor's published specialty or concern keywords within this clinic
+  const doctorSpecialtyMatch = doctors.find((d) => {
+    const specKey = normalizeTextKey(d.specialty);
+    return (
+      (specKey && (specKey.includes(target) || target.includes(specKey))) ||
+      d.concern_keywords.some((kw) => {
+        const kwKey = normalizeTextKey(kw);
+        return kwKey && (kwKey.includes(target) || target.includes(kwKey));
+      })
+    );
+  });
+  if (doctorSpecialtyMatch) {
+    return { ok: true, service: null, label: trimmed };
+  }
+
+  const offered = services.map((s) => s.name).join(', ');
+  return {
+    ok: false,
+    message: `We do not offer ${trimmed} at this clinic. Our available services are: ${offered}.`,
+  };
 }
 
 function normalizeDoctorKey(name: string): string {
@@ -129,6 +213,7 @@ export function validateSlotRequest({
   time,
   timezone,
   clinicHours,
+  offDays,
   doctorAvailability,
   slotMinutes = DEFAULT_SLOT_MINUTES,
 }: {
@@ -136,6 +221,7 @@ export function validateSlotRequest({
   time: string;
   timezone: string;
   clinicHours?: string | null;
+  offDays?: string | null;
   doctorAvailability?: string | null;
   slotMinutes?: number;
 }): SlotValidationResult {
@@ -156,7 +242,8 @@ export function validateSlotRequest({
 
   const weekdayIndex = new Date(Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)))).getUTCDay();
   const weekday = WEEKDAYS[weekdayIndex];
-  if (isWeekdayClosed(weekday, clinicHours) || isWeekdayClosed(weekday, doctorAvailability)) {
+  const offDayMatch = Boolean(offDays && new RegExp(`\\b${weekday}[a-z]*\\b`, 'i').test(offDays));
+  if (offDayMatch || isWeekdayClosed(weekday, clinicHours) || isWeekdayClosed(weekday, doctorAvailability)) {
     return {
       ok: false,
       message: 'The clinic or doctor is closed on that day. Please pick another day.',

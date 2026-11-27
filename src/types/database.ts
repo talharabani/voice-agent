@@ -86,6 +86,16 @@ export type AppointmentRow = {
   doctor_name: string | null;
 };
 
+export type ClinicService = {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  fee: string;
+  duration_minutes: number | null;
+  doctor_ids?: string[];
+};
+
 export type DoctorRow = {
   id: string;
   user_id: string;
@@ -96,6 +106,8 @@ export type DoctorRow = {
   description: string;
   photo_url: string | null;
   availability: string;
+  consultation_fee?: string;
+  slot_duration_minutes?: number | null;
   languages: string[];
   concern_keywords: string[];
   is_active: boolean;
@@ -111,6 +123,13 @@ export type ClinicProfileRow = {
   phone: string;
   opening_hours: string;
   timezone: string;
+  services?: ClinicService[];
+  default_slot_minutes?: number;
+  off_days?: string;
+  booking_rules?: string;
+  custom_instructions?: string;
+  staff_notify_phone?: string | null;
+  staff_webhook_url?: string | null;
   updated_at: string;
 };
 

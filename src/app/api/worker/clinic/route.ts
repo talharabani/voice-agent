@@ -17,7 +17,7 @@ const LANGUAGE_LABELS: Record<string, string> = {
 };
 
 function parseHoursRange(openingHours: string | null | undefined): { open: number; close: number } {
-  const match = openingHours?.match(/(\d{1,2})(?::\d{2})?\s*(?:am|pm)?\s*[-to]+\s*(\d{1,2})(?::\d{2})?\s*(pm)?/i);
+  const match = openingHours?.match(/(\d{1,2})(?::\d{2})?\s*(?:am|pm)?\s*[-to–]+\s*(\d{1,2})(?::\d{2})?\s*(pm)?/i);
   if (!match) return { open: 9, close: 21 };
   const open = Math.min(23, Math.max(0, Number(match[1])));
   let close = Math.min(23, Math.max(0, Number(match[2])));
@@ -46,34 +46,74 @@ export async function GET(request: Request) {
     if (agentError) throw agentError;
     if (!agent) throw new ApiError('Active agent not found.', 404);
 
+    // Strictly tenant-scoped lookup: clinic profile, active doctors, and this agent's knowledge docs
     const [directory, knowledgeRes] = await Promise.all([
       loadClinicDirectory(agent.user_id),
       supabaseAdmin
         .from('knowledge_docs')
-        .select('name, content, url, created_at')
+        .select('name, type, content, url, created_at')
         .eq('agent_id', agent.id)
         .order('created_at', { ascending: false })
-        .limit(20),
+        .limit(30),
     ]);
 
     const clinic = directory.clinic;
     const timings = clinic?.opening_hours || '10:00 to 19:00';
     const { open, close } = parseHoursRange(timings);
     const langCode = String(agent.language || 'ur').split('-')[0].toLowerCase();
+    const defaultSlotMinutes = clinic?.default_slot_minutes ?? 30;
 
     const doctors = directory.doctors.map((d) => ({
+      id: d.id,
       name: d.name,
       speciality: d.specialty,
-      fee: 'Confirm at clinic',
+      qualifications: d.qualifications || '',
+      experience_years: d.experience_years ?? 0,
+      fee: d.consultation_fee?.trim() || 'Confirm at clinic',
       availability: d.availability || timings,
+      slot_duration_minutes: d.slot_duration_minutes ?? defaultSlotMinutes,
+      languages: d.languages ?? [],
+      concern_keywords: d.concern_keywords ?? [],
+      description: d.description || '',
     }));
 
-    const MAX_NOTES_CHARS = 3000;
+    const doctorById = new Map(doctors.map((d) => [d.id, d.name]));
+    const configuredServices = directory.services.map((s) => ({
+      id: s.id,
+      name: s.name,
+      category: s.category || '',
+      description: s.description || '',
+      fee: s.fee || '',
+      duration_minutes: s.duration_minutes ?? defaultSlotMinutes,
+      doctors: (s.doctor_ids ?? [])
+        .map((id) => doctorById.get(id))
+        .filter((name): name is string => Boolean(name)),
+    }));
+
+    // Derive a strict summary from configured services first, else only from published doctor specialties
+    const servicesSummary = configuredServices.length
+      ? configuredServices
+          .map((s) => {
+            const parts = [s.name];
+            if (s.category) parts.push(`(${s.category})`);
+            if (s.fee) parts.push(`Fee: ${s.fee}`);
+            if (s.duration_minutes) parts.push(`${s.duration_minutes} min`);
+            if (s.description) parts.push(`— ${s.description}`);
+            if (s.doctors.length) parts.push(`[Doctors: ${s.doctors.join(', ')}]`);
+            return parts.join(' ');
+          })
+          .join('\n  - ')
+      : doctors.length
+        ? Array.from(new Set(doctors.map((d) => d.speciality))).join(', ')
+        : 'Only clinic reception and appointment requests (no specific services published yet)';
+
+    const MAX_NOTES_CHARS = 3500;
     let clinicNotes = '';
     for (const doc of knowledgeRes.data ?? []) {
       const text = (doc.content || doc.url || '').trim();
       if (!text) continue;
-      const entry = `- ${doc.name}: ${text}`;
+      const prefix = doc.type === 'faq' ? '[FAQ] ' : '';
+      const entry = `- ${prefix}${doc.name}: ${text}`;
       if (clinicNotes.length + entry.length + 1 > MAX_NOTES_CHARS) {
         const remaining = MAX_NOTES_CHARS - clinicNotes.length - 1;
         if (remaining > 40) {
@@ -84,27 +124,39 @@ export async function GET(request: Request) {
       clinicNotes += (clinicNotes ? '\n' : '') + entry;
     }
 
+    const extraRules = [
+      clinic?.custom_instructions,
+      agent.system_prompt,
+      agent.description,
+    ]
+      .filter((v): v is string => Boolean(v && v.trim()))
+      .join('\n');
+
     return NextResponse.json({
       clinic: {
+        tenant_id: agent.user_id,
         agent_id: agent.id,
         agent_name: agent.name,
+        greeting: agent.greeting || '',
         clinic_name: clinic?.clinic_name || agent.name || 'Clinic',
         address: clinic?.address || 'Not published',
+        phone: clinic?.phone || '',
         timings,
         open_hour: open,
         close_hour: close,
-        off_days: 'Check clinic timings',
+        off_days: clinic?.off_days?.trim() || 'Check clinic timings',
+        default_slot_minutes: defaultSlotMinutes,
+        booking_rules: clinic?.booking_rules?.trim() || '',
         default_language: LANGUAGE_LABELS[langCode] || 'Urdu',
         tone: 'warm, polite and professional',
         emergency_number: clinic?.phone || '1122',
         timezone: clinic?.timezone || agent.timezone || 'Asia/Karachi',
-        doctors: doctors.length
-          ? doctors
-          : [{ name: 'Clinic Doctor', speciality: 'General Consultation', fee: 'Confirm at clinic' }],
-        services: 'General consultation and appointment booking',
+        doctors,
+        services_list: configuredServices,
+        services: configuredServices.length ? `  - ${servicesSummary}` : servicesSummary,
         clinic_notes: clinicNotes,
         fallback_action: 'say the clinic staff will call the patient back shortly',
-        extra_rules: [agent.system_prompt, agent.description].filter(Boolean).join(' '),
+        extra_rules: extraRules,
       },
     });
   } catch (error) {

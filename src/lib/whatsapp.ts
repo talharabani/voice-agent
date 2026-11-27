@@ -98,3 +98,110 @@ export async function sendAppointmentConfirmation(id: string, userId: string) {
   }).eq('id', id).eq('user_id', userId).eq('whatsapp_status', 'sending');
   if (saveError) throw new Error('Could not save WhatsApp send result; check Meta before retrying');
 }
+
+/**
+ * Notify a clinic's designated staff member after a booking is persisted.
+ * Supports WhatsApp text alert (via existing Meta Cloud API credentials)
+ * and/or a clinic-configured HTTPS webhook. Never throws so a notification
+ * failure cannot roll back a saved appointment.
+ */
+export async function notifyClinicStaff({
+  clinic,
+  appointment,
+}: {
+  clinic: {
+    clinic_name: string;
+    phone?: string | null;
+    timezone?: string | null;
+    staff_notify_phone?: string | null;
+    staff_webhook_url?: string | null;
+  } | null;
+  appointment: {
+    id: string;
+    customer_name: string | null;
+    customer_phone: string | null;
+    service: string | null;
+    doctor_name: string | null;
+    requested_time: string | null;
+    patient_concern: string | null;
+  };
+}): Promise<{ whatsappSent: boolean; webhookSent: boolean }> {
+  let whatsappSent = false;
+  let webhookSent = false;
+  if (!clinic) return { whatsappSent, webhookSent };
+
+  const staffPhone = normalizeWhatsappPhone(clinic.staff_notify_phone);
+  if (staffPhone && /^\+[1-9]\d{7,14}$/.test(staffPhone) && whatsappConfigured()) {
+    try {
+      const version = process.env.META_GRAPH_API_VERSION?.trim() || 'v21.0';
+      const sender = process.env.META_PHONE_NUMBER_ID!.trim();
+      if (/^v\d+\.\d+$/.test(version) && /^\d+$/.test(sender)) {
+        const text = [
+          `New booking at ${clinic.clinic_name}`,
+          `Patient: ${appointment.customer_name || 'Unknown'} (${appointment.customer_phone || 'No phone'})`,
+          `Service: ${appointment.service || 'Consultation'}`,
+          `Doctor: ${appointment.doctor_name || 'To be assigned'}`,
+          `Slot: ${appointment.requested_time || 'To be confirmed'}`,
+          appointment.patient_concern ? `Concern: ${appointment.patient_concern}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const res = await fetch(`https://graph.facebook.com/${version}/${sender}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: staffPhone.slice(1),
+            type: 'text',
+            text: { body: text },
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        whatsappSent = res.ok;
+      }
+    } catch (err) {
+      console.warn('Staff WhatsApp notification failed:', err instanceof Error ? err.message : 'Unknown');
+    }
+  }
+
+  const webhookUrl = clinic.staff_webhook_url?.trim();
+  if (webhookUrl && /^https:\/\/.+/i.test(webhookUrl)) {
+    try {
+      const parsed = new URL(webhookUrl);
+      const host = parsed.hostname.toLowerCase();
+      const isPrivate =
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '::1' ||
+        host.endsWith('.local') ||
+        host.endsWith('.internal') ||
+        /^10\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^169\.254\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+      if (!isPrivate) {
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'appointment.booked',
+            clinic_name: clinic.clinic_name,
+            timezone: clinic.timezone || 'Asia/Karachi',
+            appointment,
+            sent_at: new Date().toISOString(),
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        webhookSent = res.ok;
+      }
+    } catch (err) {
+      console.warn('Staff webhook notification failed:', err instanceof Error ? err.message : 'Unknown');
+    }
+  }
+
+  return { whatsappSent, webhookSent };
+}

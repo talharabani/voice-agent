@@ -127,14 +127,19 @@ export function LiveKitCall({ agentId, token }: { agentId?: string; token?: stri
     ringtoneRef.current.start();
 
     try {
-      const res = await fetch('/api/livekit/token', {
+      const endpoint = token ? `/api/public/call/${token}/livekit` : '/api/livekit/token';
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(token ? { token } : { agent_id: agentId }),
+        body: JSON.stringify(token ? {} : { agent_id: agentId }),
       });
-      const data = await res.json();
+      const isJson = res.headers.get('content-type')?.includes('application/json');
+      const data = isJson ? await res.json() : null;
       if (!res.ok) {
-        throw new Error(data.error ?? 'Could not start LiveKit call.');
+        throw new Error(data?.error ?? 'Could not connect to reception. Please try again.');
+      }
+      if (!data?.serverUrl || !data?.token) {
+        throw new Error('Could not start voice session. Please try again.');
       }
       setUiState('ringing');
       setSession({

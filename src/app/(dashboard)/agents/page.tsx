@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Phone, PhoneCall, Trash2, Link2 } from "lucide-react";
+import { Plus, Phone, PhoneCall, Trash2, Link2, Pencil } from "lucide-react";
 
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Waveform } from "@/components/voice/waveform";
@@ -45,12 +45,14 @@ interface Agent {
   system_prompt: string | null;
   business_type: string | null;
   voice: string;
+  language: string;
   is_active: boolean;
   share_token: string;
 }
 
 export default function AgentsPage() {
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -61,6 +63,7 @@ export default function AgentsPage() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [voice, setVoice] = useState("warm-female");
   const [speechLanguage, setSpeechLanguage] = useState('ur');
+  const [isActive, setIsActive] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -79,36 +82,68 @@ export default function AgentsPage() {
     void load();
   }, [load]);
 
-  async function handleCreate(e: React.FormEvent) {
+  function openCreateDialog() {
+    setEditingId(null);
+    setName("");
+    setBusinessType("");
+    setGreeting("");
+    setSystemPrompt("");
+    setVoice("warm-female");
+    setSpeechLanguage("ur");
+    setIsActive(true);
+    setOpen(true);
+  }
+
+  function openEditDialog(agent: Agent) {
+    setEditingId(agent.id);
+    setName(agent.name);
+    setBusinessType(agent.business_type ?? "");
+    setGreeting(agent.greeting ?? "");
+    setSystemPrompt(agent.system_prompt ?? "");
+    setVoice(agent.voice || "warm-female");
+    setSpeechLanguage((agent.language || "ur").split("-")[0]);
+    setIsActive(agent.is_active);
+    setOpen(true);
+  }
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch("/api/agents", {
-        method: "POST",
+      const endpoint = editingId ? `/api/agents/${editingId}` : "/api/agents";
+      const method = editingId ? "PATCH" : "POST";
+      const res = await fetch(endpoint, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
           voice,
           language: speechLanguage,
-          ...(businessType ? { business_type: businessType } : {}),
-          ...(greeting ? { greeting } : {}),
-          ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+          is_active: isActive,
+          business_type: businessType || undefined,
+          greeting: greeting || undefined,
+          system_prompt: systemPrompt || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error ?? "Failed to create agent");
+        toast.error(data.error ?? `Failed to ${editingId ? "update" : "create"} agent`);
         return;
       }
-      toast.success("Agent created — now test a call!");
+      toast.success(
+        editingId
+          ? "Agent updated — live calls will use these settings immediately"
+          : "Agent created — now test a call!"
+      );
       setOpen(false);
+      setEditingId(null);
       setName("");
       setBusinessType("");
       setGreeting("");
       setSystemPrompt("");
       void load();
     } catch {
-      toast.error("Failed to create agent");
+      toast.error(`Failed to ${editingId ? "update" : "create"} agent`);
     } finally {
       setSaving(false);
     }
@@ -142,21 +177,25 @@ export default function AgentsPage() {
         title="Agents"
         description="Voice agents you've configured for your business."
         action={
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog open={open} onOpenChange={(next) => { if (!saving) setOpen(next); }}>
             <DialogTrigger asChild>
-              <Button>
+              <Button onClick={openCreateDialog}>
                 <Plus className="size-4" />
                 New agent
               </Button>
             </DialogTrigger>
             <DialogContent className="max-h-[85vh] overflow-y-auto border-brand-border bg-brand-surface">
               <DialogHeader>
-                <DialogTitle className="text-brand-text">Create an agent</DialogTitle>
+                <DialogTitle className="text-brand-text">
+                  {editingId ? "Configure clinic agent" : "Create an agent"}
+                </DialogTitle>
                 <DialogDescription>
-                  Give your agent a name, a voice, and a job to do.
+                  {editingId
+                    ? "Update instructions, greeting, voice, or language. Changes reflect immediately on new calls."
+                    : "Give your agent a name, a voice, and a job to do."}
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleCreate} className="flex flex-col gap-4">
+              <form onSubmit={handleSave} className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="agent-name">Name</Label>
                   <Input
@@ -214,9 +253,19 @@ export default function AgentsPage() {
                   </Select>
                 </div>
                 <div className="flex flex-col gap-2"><Label htmlFor="agent-speech-language">Default microphone language</Label><Select value={speechLanguage} onValueChange={setSpeechLanguage}><SelectTrigger id="agent-speech-language"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ur">Urdu</SelectItem><SelectItem value="en">English</SelectItem><SelectItem value="pa">Punjabi</SelectItem><SelectItem value="hi">Hindi</SelectItem></SelectContent></Select><p className="text-xs text-brand-muted">Start with the language your patients speak most. Callers can change it before speaking.</p></div>
+                {editingId && (
+                  <label className="flex items-center gap-2.5 text-sm text-brand-text">
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={(e) => setIsActive(e.target.checked)}
+                    />
+                    Agent active (accepting calls &amp; bookings)
+                  </label>
+                )}
                 <DialogFooter>
                   <Button type="submit" disabled={saving}>
-                    {saving ? "Creating…" : "Create agent"}
+                    {saving ? "Saving…" : editingId ? "Save changes" : "Create agent"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -252,6 +301,15 @@ export default function AgentsPage() {
                     <Badge variant={agent.is_active ? "default" : "secondary"}>
                       {agent.is_active ? "Active" : "Paused"}
                     </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 text-brand-muted hover:text-brand-text"
+                      onClick={() => openEditDialog(agent)}
+                      aria-label="Edit agent"
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
