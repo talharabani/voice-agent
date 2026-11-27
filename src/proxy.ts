@@ -9,7 +9,7 @@ const isPublicRoute = createRouteMatcher([
   "/api/telephony(.*)",
   "/api/public(.*)",
   "/api/voice/speech",
-  "/api/livekit/token",
+  "/api/worker/(.*)",
   "/call(.*)",
 ]);
 
